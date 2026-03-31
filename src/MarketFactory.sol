@@ -22,6 +22,13 @@ contract MarketFactory is IMarketFactory, Ownable, Pausable {
     error ZeroAddress();
     error InvalidResolutionTimestamp();
     error InsufficientInitialLiquidity();
+    error MarketNotResolved(uint256 marketId);
+    error NotMarketCreator(uint256 marketId, address caller);
+    error DepositAlreadyRefunded(uint256 marketId);
+    error InvalidTradingFee(uint256 fee, uint256 maxFee);
+
+    /// @notice Maximum trading fee: 10% (1000 basis points)
+    uint256 public constant MAX_TRADING_FEE = 1000;
 
     // ──────────────────────────────────────────────
     // Immutable / External Contracts
@@ -91,7 +98,7 @@ contract MarketFactory is IMarketFactory, Ownable, Pausable {
     }
 
     // ──────────────────────────────────────────────
-    // Interface stubs — business logic in future tasks
+    // Market Creation
     // ──────────────────────────────────────────────
 
     /// @inheritdoc IMarketFactory
@@ -171,34 +178,66 @@ contract MarketFactory is IMarketFactory, Ownable, Pausable {
         return marketId;
     }
 
+    // ──────────────────────────────────────────────
+    // Admin Functions
+    // ──────────────────────────────────────────────
+
     /// @inheritdoc IMarketFactory
-    function pauseMarketCreation() external override {
-        revert("NOT_IMPLEMENTED");
+    function pauseMarketCreation() external override onlyOwner {
+        _pause();
     }
 
     /// @inheritdoc IMarketFactory
-    function unpauseMarketCreation() external override {
-        revert("NOT_IMPLEMENTED");
+    function unpauseMarketCreation() external override onlyOwner {
+        _unpause();
     }
 
     /// @inheritdoc IMarketFactory
-    function updateCreationDeposit(uint256) external override {
-        revert("NOT_IMPLEMENTED");
+    function updateCreationDeposit(uint256 newDeposit) external override onlyOwner {
+        creationDeposit = newDeposit;
     }
 
     /// @inheritdoc IMarketFactory
-    function updateTradingFee(uint256) external override {
-        revert("NOT_IMPLEMENTED");
+    function updateTradingFee(uint256 newFee) external override onlyOwner {
+        if (newFee > MAX_TRADING_FEE) {
+            revert InvalidTradingFee(newFee, MAX_TRADING_FEE);
+        }
+        tradingFee = newFee;
     }
+
+    // ──────────────────────────────────────────────
+    // Views
+    // ──────────────────────────────────────────────
 
     /// @inheritdoc IMarketFactory
     function getMarket(uint256 marketId) external view override returns (MarketData memory) {
         return markets[marketId];
     }
 
+    // ──────────────────────────────────────────────
+    // Creator Functions
+    // ──────────────────────────────────────────────
+
     /// @inheritdoc IMarketFactory
-    function refundCreationDeposit(uint256) external override {
-        revert("NOT_IMPLEMENTED");
+    function refundCreationDeposit(uint256 marketId) external override {
+        MarketData storage m = markets[marketId];
+
+        if (m.status != MarketStatus.Resolved) {
+            revert MarketNotResolved(marketId);
+        }
+        if (m.creator != msg.sender) {
+            revert NotMarketCreator(marketId, msg.sender);
+        }
+        if (m.creationDeposit == 0) {
+            revert DepositAlreadyRefunded(marketId);
+        }
+
+        uint256 amount = m.creationDeposit;
+        m.creationDeposit = 0;
+
+        collateralToken.safeTransfer(msg.sender, amount);
+
+        emit CreationDepositRefunded(marketId, msg.sender, amount);
     }
 
     // ──────────────────────────────────────────────
