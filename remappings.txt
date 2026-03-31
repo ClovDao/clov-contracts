@@ -1,2 +1,6 @@
 @openzeppelin/=lib/openzeppelin-contracts/
 forge-std/=lib/forge-std/src/
+conditional-tokens/=lib/conditional-tokens-contracts/
+fpmm/=lib/conditional-tokens-market-makers/
+openzeppelin-solidity/=lib/openzeppelin-solidity/
+@gnosis.pm/conditional-tokens-contracts/=lib/conditional-tokens-contracts/
