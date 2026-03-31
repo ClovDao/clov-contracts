@@ -1,0 +1,11 @@
+{
+  "name": "@clov/contracts",
+  "private": true,
+  "version": "0.0.0",
+  "scripts": {
+    "build": "forge build",
+    "test": "forge test",
+    "lint": "forge fmt --check",
+    "clean": "forge clean"
+  }
+}
