@@ -26,6 +26,7 @@ contract MarketFactory is IMarketFactory, Ownable, Pausable {
     error NotMarketCreator(uint256 marketId, address caller);
     error DepositAlreadyRefunded(uint256 marketId);
     error InvalidTradingFee(uint256 fee, uint256 maxFee);
+    error UnauthorizedStatusUpdate(address caller);
 
     /// @notice Maximum trading fee: 10% (1000 basis points)
     uint256 public constant MAX_TRADING_FEE = 1000;
@@ -203,6 +204,15 @@ contract MarketFactory is IMarketFactory, Ownable, Pausable {
             revert InvalidTradingFee(newFee, MAX_TRADING_FEE);
         }
         tradingFee = newFee;
+    }
+
+    /// @inheritdoc IMarketFactory
+    function updateMarketStatus(uint256 marketId, MarketStatus newStatus) external override {
+        if (msg.sender != oracleAdapter && msg.sender != marketResolver) {
+            revert UnauthorizedStatusUpdate(msg.sender);
+        }
+        markets[marketId].status = newStatus;
+        emit MarketStatusChanged(marketId, newStatus);
     }
 
     // ──────────────────────────────────────────────

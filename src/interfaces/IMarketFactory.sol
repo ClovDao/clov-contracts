@@ -63,4 +63,6 @@ interface IMarketFactory {
     function getMarket(uint256 marketId) external view returns (MarketData memory);
 
     function refundCreationDeposit(uint256 marketId) external;
+
+    function updateMarketStatus(uint256 marketId, MarketStatus newStatus) external;
 }
