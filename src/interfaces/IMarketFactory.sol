@@ -44,6 +44,10 @@ interface IMarketFactory {
 
     event CreationDepositRefunded(uint256 indexed marketId, address indexed creator, uint256 amount);
 
+    event CreationDepositUpdated(uint256 oldDeposit, uint256 newDeposit);
+
+    event TradingFeeUpdated(uint256 oldFee, uint256 newFee);
+
     function createMarket(
         string calldata metadataURI,
         uint256 resolutionTimestamp,

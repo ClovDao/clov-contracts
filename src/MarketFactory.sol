@@ -3,6 +3,7 @@ pragma solidity ^0.8.24;
 
 import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
 import { Pausable } from "@openzeppelin/contracts/utils/Pausable.sol";
+import { ReentrancyGuard } from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { SafeERC20 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import { IConditionalTokens } from "./interfaces/IConditionalTokens.sol";
@@ -12,7 +13,7 @@ import { IMarketFactory } from "./interfaces/IMarketFactory.sol";
 /// @title MarketFactory
 /// @notice Factory contract for creating and managing prediction markets
 /// @dev Uses Gnosis Conditional Tokens + FPMM for market mechanics
-contract MarketFactory is IMarketFactory, Ownable, Pausable {
+contract MarketFactory is IMarketFactory, Ownable, Pausable, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
     // ──────────────────────────────────────────────
@@ -35,16 +36,16 @@ contract MarketFactory is IMarketFactory, Ownable, Pausable {
     // Immutable / External Contracts
     // ──────────────────────────────────────────────
 
-    IERC20 public collateralToken;
-    IConditionalTokens public conditionalTokens;
-    IFPMMDeterministicFactory public fpmmFactory;
+    IERC20 public immutable collateralToken;
+    IConditionalTokens public immutable conditionalTokens;
+    IFPMMDeterministicFactory public immutable fpmmFactory;
 
     // ──────────────────────────────────────────────
     // Privileged Addresses
     // ──────────────────────────────────────────────
 
-    address public oracleAdapter;
-    address public marketResolver;
+    address public immutable oracleAdapter;
+    address public immutable marketResolver;
 
     // ──────────────────────────────────────────────
     // Configuration
@@ -109,7 +110,7 @@ contract MarketFactory is IMarketFactory, Ownable, Pausable {
         Category category,
         uint256 initialLiquidity,
         uint256[] calldata initialOdds
-    ) external override whenNotPaused returns (uint256) {
+    ) external override whenNotPaused nonReentrant returns (uint256) {
         // 1. Validate resolution timestamp (must be at least 1 hour in the future)
         if (resolutionTimestamp <= block.timestamp + 1 hours) {
             revert InvalidResolutionTimestamp();
@@ -195,7 +196,9 @@ contract MarketFactory is IMarketFactory, Ownable, Pausable {
 
     /// @inheritdoc IMarketFactory
     function updateCreationDeposit(uint256 newDeposit) external override onlyOwner {
+        uint256 oldDeposit = creationDeposit;
         creationDeposit = newDeposit;
+        emit CreationDepositUpdated(oldDeposit, newDeposit);
     }
 
     /// @inheritdoc IMarketFactory
@@ -203,7 +206,9 @@ contract MarketFactory is IMarketFactory, Ownable, Pausable {
         if (newFee > MAX_TRADING_FEE) {
             revert InvalidTradingFee(newFee, MAX_TRADING_FEE);
         }
+        uint256 oldFee = tradingFee;
         tradingFee = newFee;
+        emit TradingFeeUpdated(oldFee, newFee);
     }
 
     /// @inheritdoc IMarketFactory

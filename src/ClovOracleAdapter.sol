@@ -3,6 +3,7 @@ pragma solidity ^0.8.24;
 
 import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
 import { Pausable } from "@openzeppelin/contracts/utils/Pausable.sol";
+import { ReentrancyGuard } from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { SafeERC20 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import { IClovOracleAdapter } from "./interfaces/IClovOracleAdapter.sol";
@@ -13,7 +14,7 @@ import { IMarketResolver } from "./interfaces/IMarketResolver.sol";
 /// @title ClovOracleAdapter
 /// @notice Bridges Clov prediction markets with UMA Optimistic Oracle V3 for outcome resolution
 /// @dev Manages assertion lifecycle: assert → UMA callback → resolve via MarketResolver
-contract ClovOracleAdapter is IClovOracleAdapter, Ownable, Pausable {
+contract ClovOracleAdapter is IClovOracleAdapter, Ownable, Pausable, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
     // ──────────────────────────────────────────────
@@ -32,23 +33,23 @@ contract ClovOracleAdapter is IClovOracleAdapter, Ownable, Pausable {
     // External Contracts
     // ──────────────────────────────────────────────
 
-    IOptimisticOracleV3 public umaOracle;
-    IERC20 public bondToken;
-    IMarketFactory public marketFactory;
-    IMarketResolver public marketResolver;
+    IOptimisticOracleV3 public immutable umaOracle;
+    IERC20 public immutable bondToken;
+    IMarketFactory public immutable marketFactory;
+    IMarketResolver public immutable marketResolver;
 
     // ──────────────────────────────────────────────
     // Configuration
     // ──────────────────────────────────────────────
 
     /// @notice Bond amount required for UMA assertions
-    uint256 public bondAmount;
+    uint256 public immutable bondAmount;
 
     /// @notice Dispute window duration in seconds
-    uint64 public assertionLiveness;
+    uint64 public immutable assertionLiveness;
 
     /// @notice UMA identifier for ASSERT_TRUTH
-    bytes32 public defaultIdentifier;
+    bytes32 public immutable defaultIdentifier;
 
     // ──────────────────────────────────────────────
     // Assertion State
@@ -97,6 +98,7 @@ contract ClovOracleAdapter is IClovOracleAdapter, Ownable, Pausable {
         external
         override
         whenNotPaused
+        nonReentrant
         returns (bytes32)
     {
         IMarketFactory.MarketData memory market = marketFactory.getMarket(marketId);

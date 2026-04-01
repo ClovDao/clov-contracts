@@ -23,9 +23,9 @@ contract MarketResolver is IMarketResolver, Ownable, Pausable {
     // External Contracts
     // ──────────────────────────────────────────────
 
-    IConditionalTokens public conditionalTokens;
-    IMarketFactory public marketFactory;
-    address public oracleAdapter;
+    IConditionalTokens public immutable conditionalTokens;
+    IMarketFactory public immutable marketFactory;
+    address public immutable oracleAdapter;
 
     // ──────────────────────────────────────────────
     // Resolution State
