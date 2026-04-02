@@ -118,18 +118,11 @@ contract IntegrationTest is Test {
             abi.encode(MOCK_ASSERTION_ID)
         );
 
-        // ── Deploy real Clov contracts ──
-        uint64 deployerNonce = vm.getNonce(deployer);
-        address predictedFactory = vm.computeCreateAddress(deployer, deployerNonce);
-        address predictedAdapter = vm.computeCreateAddress(deployer, deployerNonce + 1);
-        address predictedResolver = vm.computeCreateAddress(deployer, deployerNonce + 2);
-
+        // ── Deploy real Clov contracts (staged with initialize) ──
         factory = new MarketFactory(
             address(usdc),
             conditionalTokens,
             fpmmFactory,
-            predictedAdapter,
-            predictedResolver,
             CREATION_DEPOSIT,
             TRADING_FEE
         );
@@ -137,18 +130,16 @@ contract IntegrationTest is Test {
         oracleAdapter = new ClovOracleAdapter(
             umaOracle,
             address(usdc),
-            address(factory),
-            predictedResolver,
             BOND_AMOUNT,
             ASSERTION_LIVENESS
         );
 
-        resolver = new MarketResolver(conditionalTokens, address(factory), address(oracleAdapter));
+        resolver = new MarketResolver(conditionalTokens);
 
-        // Sanity: verify predicted addresses match
-        assertEq(address(factory), predictedFactory, "factory address mismatch");
-        assertEq(address(oracleAdapter), predictedAdapter, "adapter address mismatch");
-        assertEq(address(resolver), predictedResolver, "resolver address mismatch");
+        // Wire cross-references
+        factory.initialize(address(oracleAdapter), address(resolver));
+        oracleAdapter.initialize(address(factory), address(resolver));
+        resolver.initialize(address(factory), address(oracleAdapter));
     }
 
     // ──────────────────────────────────────────────

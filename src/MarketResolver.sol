@@ -18,14 +18,20 @@ contract MarketResolver is IMarketResolver, Ownable, Pausable {
     error ZeroAddress();
     error OnlyOracleAdapter();
     error MarketAlreadyResolved(uint256 marketId);
+    error AlreadyInitialized();
 
     // ──────────────────────────────────────────────
     // External Contracts
     // ──────────────────────────────────────────────
 
     IConditionalTokens public immutable conditionalTokens;
-    IMarketFactory public immutable marketFactory;
-    address public immutable oracleAdapter;
+
+    // ──────────────────────────────────────────────
+    // Cross-references (set post-deploy via initialize)
+    // ──────────────────────────────────────────────
+
+    IMarketFactory public marketFactory;
+    address public oracleAdapter;
 
     // ──────────────────────────────────────────────
     // Resolution State
@@ -38,12 +44,24 @@ contract MarketResolver is IMarketResolver, Ownable, Pausable {
     // Constructor
     // ──────────────────────────────────────────────
 
-    constructor(address _conditionalTokens, address _marketFactory, address _oracleAdapter) Ownable(msg.sender) {
-        if (_conditionalTokens == address(0) || _marketFactory == address(0) || _oracleAdapter == address(0)) {
+    constructor(address _conditionalTokens) Ownable(msg.sender) {
+        if (_conditionalTokens == address(0)) {
             revert ZeroAddress();
         }
 
         conditionalTokens = IConditionalTokens(_conditionalTokens);
+    }
+
+    /// @notice One-time initialization of cross-references (resolves circular dependency)
+    /// @param _marketFactory Address of the MarketFactory
+    /// @param _oracleAdapter Address of the ClovOracleAdapter
+    function initialize(address _marketFactory, address _oracleAdapter) external onlyOwner {
+        if (address(marketFactory) != address(0) || oracleAdapter != address(0)) {
+            revert AlreadyInitialized();
+        }
+        if (_marketFactory == address(0) || _oracleAdapter == address(0)) {
+            revert ZeroAddress();
+        }
         marketFactory = IMarketFactory(_marketFactory);
         oracleAdapter = _oracleAdapter;
     }

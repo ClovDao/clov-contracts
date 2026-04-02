@@ -355,19 +355,11 @@ contract MarketInvariants is StdInvariant, Test {
             abi.encode(DEFAULT_IDENTIFIER)
         );
 
-        // ── Deploy real contracts with predicted addresses ──
-        address deployer = address(this);
-        uint64 nonce = vm.getNonce(deployer);
-        address predictedFactory = vm.computeCreateAddress(deployer, nonce);
-        address predictedAdapter = vm.computeCreateAddress(deployer, nonce + 1);
-        address predictedResolver = vm.computeCreateAddress(deployer, nonce + 2);
-
+        // ── Deploy real contracts (staged with initialize) ──
         factory = new MarketFactory(
             address(usdc),
             conditionalTokens,
             fpmmFactory,
-            predictedAdapter,
-            predictedResolver,
             CREATION_DEPOSIT,
             TRADING_FEE
         );
@@ -375,18 +367,16 @@ contract MarketInvariants is StdInvariant, Test {
         oracleAdapter = new ClovOracleAdapter(
             umaOracle,
             address(usdc),
-            address(factory),
-            predictedResolver,
             BOND_AMOUNT,
             ASSERTION_LIVENESS
         );
 
-        resolver = new MarketResolver(conditionalTokens, address(factory), address(oracleAdapter));
+        resolver = new MarketResolver(conditionalTokens);
 
-        // Verify predicted addresses
-        assertEq(address(factory), predictedFactory);
-        assertEq(address(oracleAdapter), predictedAdapter);
-        assertEq(address(resolver), predictedResolver);
+        // Wire cross-references
+        factory.initialize(address(oracleAdapter), address(resolver));
+        oracleAdapter.initialize(address(factory), address(resolver));
+        resolver.initialize(address(factory), address(oracleAdapter));
 
         // ── Deploy Handler ──
         handler = new MarketHandler(
@@ -398,7 +388,7 @@ contract MarketInvariants is StdInvariant, Test {
             fpmmFactory,
             umaOracle,
             mockFpmm,
-            deployer
+            address(this)
         );
 
         // ── Target only the handler for invariant testing ──

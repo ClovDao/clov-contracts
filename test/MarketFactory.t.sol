@@ -25,13 +25,11 @@ contract MarketFactoryHarness is MarketFactory {
         address _collateralToken,
         address _conditionalTokens,
         address _fpmmFactory,
-        address _oracleAdapter,
-        address _marketResolver,
         uint256 _creationDeposit,
         uint256 _tradingFee
     )
         MarketFactory(
-            _collateralToken, _conditionalTokens, _fpmmFactory, _oracleAdapter, _marketResolver, _creationDeposit, _tradingFee
+            _collateralToken, _conditionalTokens, _fpmmFactory, _creationDeposit, _tradingFee
         )
     {}
 
@@ -65,8 +63,9 @@ contract MarketFactoryTest is Test {
         usdc = new MockERC20();
 
         factory = new MarketFactoryHarness(
-            address(usdc), conditionalTokens, fpmmFactory, oracleAdapter, marketResolver, CREATION_DEPOSIT, TRADING_FEE
+            address(usdc), conditionalTokens, fpmmFactory, CREATION_DEPOSIT, TRADING_FEE
         );
+        factory.initialize(oracleAdapter, marketResolver);
 
         // Mock ConditionalTokens.prepareCondition — just succeed
         vm.mockCall(conditionalTokens, abi.encodeWithSelector(IConditionalTokens.prepareCondition.selector), abi.encode());
@@ -104,19 +103,28 @@ contract MarketFactoryTest is Test {
 
     function test_constructor_revertsOnZeroAddress() public {
         vm.expectRevert(MarketFactory.ZeroAddress.selector);
-        new MarketFactoryHarness(address(0), conditionalTokens, fpmmFactory, oracleAdapter, marketResolver, CREATION_DEPOSIT, TRADING_FEE);
+        new MarketFactoryHarness(address(0), conditionalTokens, fpmmFactory, CREATION_DEPOSIT, TRADING_FEE);
 
         vm.expectRevert(MarketFactory.ZeroAddress.selector);
-        new MarketFactoryHarness(address(usdc), address(0), fpmmFactory, oracleAdapter, marketResolver, CREATION_DEPOSIT, TRADING_FEE);
+        new MarketFactoryHarness(address(usdc), address(0), fpmmFactory, CREATION_DEPOSIT, TRADING_FEE);
 
         vm.expectRevert(MarketFactory.ZeroAddress.selector);
-        new MarketFactoryHarness(address(usdc), conditionalTokens, address(0), oracleAdapter, marketResolver, CREATION_DEPOSIT, TRADING_FEE);
+        new MarketFactoryHarness(address(usdc), conditionalTokens, address(0), CREATION_DEPOSIT, TRADING_FEE);
+    }
+
+    function test_initialize_revertsOnZeroAddress() public {
+        MarketFactoryHarness f = new MarketFactoryHarness(address(usdc), conditionalTokens, fpmmFactory, CREATION_DEPOSIT, TRADING_FEE);
 
         vm.expectRevert(MarketFactory.ZeroAddress.selector);
-        new MarketFactoryHarness(address(usdc), conditionalTokens, fpmmFactory, address(0), marketResolver, CREATION_DEPOSIT, TRADING_FEE);
+        f.initialize(address(0), marketResolver);
 
         vm.expectRevert(MarketFactory.ZeroAddress.selector);
-        new MarketFactoryHarness(address(usdc), conditionalTokens, fpmmFactory, oracleAdapter, address(0), CREATION_DEPOSIT, TRADING_FEE);
+        f.initialize(oracleAdapter, address(0));
+    }
+
+    function test_initialize_revertsIfAlreadyInitialized() public {
+        vm.expectRevert(MarketFactory.AlreadyInitialized.selector);
+        factory.initialize(oracleAdapter, marketResolver);
     }
 
     // ──────────────────────────────────────────────

@@ -25,12 +25,10 @@ contract ClovOracleAdapterHarness is ClovOracleAdapter {
     constructor(
         address _umaOracle,
         address _bondToken,
-        address _marketFactory,
-        address _marketResolver,
         uint256 _bondAmount,
         uint64 _assertionLiveness
     )
-        ClovOracleAdapter(_umaOracle, _bondToken, _marketFactory, _marketResolver, _bondAmount, _assertionLiveness)
+        ClovOracleAdapter(_umaOracle, _bondToken, _bondAmount, _assertionLiveness)
     {}
 
     function exposed_uint256ToString(uint256 value) external pure returns (string memory) {
@@ -67,8 +65,9 @@ contract ClovOracleAdapterTest is Test {
         );
 
         adapter = new ClovOracleAdapterHarness(
-            umaOracle, address(bondToken), marketFactory, marketResolver, BOND_AMOUNT, ASSERTION_LIVENESS
+            umaOracle, address(bondToken), BOND_AMOUNT, ASSERTION_LIVENESS
         );
+        adapter.initialize(marketFactory, marketResolver);
     }
 
     // ──────────────────────────────────────────────
@@ -143,9 +142,7 @@ contract ClovOracleAdapterTest is Test {
 
     function test_constructor_revertsOnZeroAddress_umaOracle() public {
         vm.expectRevert(ClovOracleAdapter.ZeroAddress.selector);
-        new ClovOracleAdapterHarness(
-            address(0), address(bondToken), marketFactory, marketResolver, BOND_AMOUNT, ASSERTION_LIVENESS
-        );
+        new ClovOracleAdapterHarness(address(0), address(bondToken), BOND_AMOUNT, ASSERTION_LIVENESS);
     }
 
     function test_constructor_revertsOnZeroAddress_bondToken() public {
@@ -154,27 +151,30 @@ contract ClovOracleAdapterTest is Test {
         vm.mockCall(newUma, abi.encodeWithSelector(IOptimisticOracleV3.defaultIdentifier.selector), abi.encode(DEFAULT_IDENTIFIER));
 
         vm.expectRevert(ClovOracleAdapter.ZeroAddress.selector);
-        new ClovOracleAdapterHarness(newUma, address(0), marketFactory, marketResolver, BOND_AMOUNT, ASSERTION_LIVENESS);
+        new ClovOracleAdapterHarness(newUma, address(0), BOND_AMOUNT, ASSERTION_LIVENESS);
     }
 
-    function test_constructor_revertsOnZeroAddress_marketFactory() public {
+    function test_initialize_revertsOnZeroAddress_marketFactory() public {
         address newUma = makeAddr("newUma2");
         vm.mockCall(newUma, abi.encodeWithSelector(IOptimisticOracleV3.defaultIdentifier.selector), abi.encode(DEFAULT_IDENTIFIER));
 
+        ClovOracleAdapterHarness a = new ClovOracleAdapterHarness(newUma, address(bondToken), BOND_AMOUNT, ASSERTION_LIVENESS);
         vm.expectRevert(ClovOracleAdapter.ZeroAddress.selector);
-        new ClovOracleAdapterHarness(
-            newUma, address(bondToken), address(0), marketResolver, BOND_AMOUNT, ASSERTION_LIVENESS
-        );
+        a.initialize(address(0), marketResolver);
     }
 
-    function test_constructor_revertsOnZeroAddress_marketResolver() public {
+    function test_initialize_revertsOnZeroAddress_marketResolver() public {
         address newUma = makeAddr("newUma3");
         vm.mockCall(newUma, abi.encodeWithSelector(IOptimisticOracleV3.defaultIdentifier.selector), abi.encode(DEFAULT_IDENTIFIER));
 
+        ClovOracleAdapterHarness a = new ClovOracleAdapterHarness(newUma, address(bondToken), BOND_AMOUNT, ASSERTION_LIVENESS);
         vm.expectRevert(ClovOracleAdapter.ZeroAddress.selector);
-        new ClovOracleAdapterHarness(
-            newUma, address(bondToken), marketFactory, address(0), BOND_AMOUNT, ASSERTION_LIVENESS
-        );
+        a.initialize(marketFactory, address(0));
+    }
+
+    function test_initialize_revertsIfAlreadyInitialized() public {
+        vm.expectRevert(ClovOracleAdapter.AlreadyInitialized.selector);
+        adapter.initialize(marketFactory, marketResolver);
     }
 
     // ──────────────────────────────────────────────

@@ -28,6 +28,7 @@ contract MarketFactory is IMarketFactory, Ownable, Pausable, ReentrancyGuard {
     error DepositAlreadyRefunded(uint256 marketId);
     error InvalidTradingFee(uint256 fee, uint256 maxFee);
     error UnauthorizedStatusUpdate(address caller);
+    error AlreadyInitialized();
 
     /// @notice Maximum trading fee: 10% (1000 basis points)
     uint256 public constant MAX_TRADING_FEE = 1000;
@@ -41,11 +42,11 @@ contract MarketFactory is IMarketFactory, Ownable, Pausable, ReentrancyGuard {
     IFPMMDeterministicFactory public immutable fpmmFactory;
 
     // ──────────────────────────────────────────────
-    // Privileged Addresses
+    // Privileged Addresses (set post-deploy via initialize)
     // ──────────────────────────────────────────────
 
-    address public immutable oracleAdapter;
-    address public immutable marketResolver;
+    address public oracleAdapter;
+    address public marketResolver;
 
     // ──────────────────────────────────────────────
     // Configuration
@@ -78,25 +79,32 @@ contract MarketFactory is IMarketFactory, Ownable, Pausable, ReentrancyGuard {
         address _collateralToken,
         address _conditionalTokens,
         address _fpmmFactory,
-        address _oracleAdapter,
-        address _marketResolver,
         uint256 _creationDeposit,
         uint256 _tradingFee
     ) Ownable(msg.sender) {
-        if (
-            _collateralToken == address(0) || _conditionalTokens == address(0) || _fpmmFactory == address(0)
-                || _oracleAdapter == address(0) || _marketResolver == address(0)
-        ) {
+        if (_collateralToken == address(0) || _conditionalTokens == address(0) || _fpmmFactory == address(0)) {
             revert ZeroAddress();
         }
 
         collateralToken = IERC20(_collateralToken);
         conditionalTokens = IConditionalTokens(_conditionalTokens);
         fpmmFactory = IFPMMDeterministicFactory(_fpmmFactory);
-        oracleAdapter = _oracleAdapter;
-        marketResolver = _marketResolver;
         creationDeposit = _creationDeposit;
         tradingFee = _tradingFee;
+    }
+
+    /// @notice One-time initialization of cross-references (resolves circular dependency)
+    /// @param _oracleAdapter Address of the ClovOracleAdapter
+    /// @param _marketResolver Address of the MarketResolver
+    function initialize(address _oracleAdapter, address _marketResolver) external onlyOwner {
+        if (oracleAdapter != address(0) || marketResolver != address(0)) {
+            revert AlreadyInitialized();
+        }
+        if (_oracleAdapter == address(0) || _marketResolver == address(0)) {
+            revert ZeroAddress();
+        }
+        oracleAdapter = _oracleAdapter;
+        marketResolver = _marketResolver;
     }
 
     // ──────────────────────────────────────────────

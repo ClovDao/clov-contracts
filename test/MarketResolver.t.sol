@@ -26,7 +26,8 @@ contract MarketResolverTest is Test {
     function setUp() public {
         owner = address(this);
 
-        resolver = new MarketResolver(conditionalTokens, marketFactory, oracleAdapter);
+        resolver = new MarketResolver(conditionalTokens);
+        resolver.initialize(marketFactory, oracleAdapter);
 
         // Mock MarketFactory.getMarket — returns a Resolving market by default
         _mockGetMarket(MARKET_ID, IMarketFactory.MarketStatus.Resolving);
@@ -97,17 +98,24 @@ contract MarketResolverTest is Test {
 
     function test_constructor_revertsOnZeroConditionalTokens() public {
         vm.expectRevert(MarketResolver.ZeroAddress.selector);
-        new MarketResolver(address(0), marketFactory, oracleAdapter);
+        new MarketResolver(address(0));
     }
 
-    function test_constructor_revertsOnZeroMarketFactory() public {
+    function test_initialize_revertsOnZeroMarketFactory() public {
+        MarketResolver r = new MarketResolver(conditionalTokens);
         vm.expectRevert(MarketResolver.ZeroAddress.selector);
-        new MarketResolver(conditionalTokens, address(0), oracleAdapter);
+        r.initialize(address(0), oracleAdapter);
     }
 
-    function test_constructor_revertsOnZeroOracleAdapter() public {
+    function test_initialize_revertsOnZeroOracleAdapter() public {
+        MarketResolver r = new MarketResolver(conditionalTokens);
         vm.expectRevert(MarketResolver.ZeroAddress.selector);
-        new MarketResolver(conditionalTokens, marketFactory, address(0));
+        r.initialize(marketFactory, address(0));
+    }
+
+    function test_initialize_revertsIfAlreadyInitialized() public {
+        vm.expectRevert(MarketResolver.AlreadyInitialized.selector);
+        resolver.initialize(marketFactory, oracleAdapter);
     }
 
     // ──────────────────────────────────────────────

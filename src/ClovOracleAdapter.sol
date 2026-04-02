@@ -28,6 +28,7 @@ contract ClovOracleAdapter is IClovOracleAdapter, Ownable, Pausable, ReentrancyG
     error OnlyUmaOracle();
     error AssertionNotFound(bytes32 assertionId);
     error AssertionAlreadySettled(bytes32 assertionId);
+    error AlreadyInitialized();
 
     // ──────────────────────────────────────────────
     // External Contracts
@@ -35,8 +36,13 @@ contract ClovOracleAdapter is IClovOracleAdapter, Ownable, Pausable, ReentrancyG
 
     IOptimisticOracleV3 public immutable umaOracle;
     IERC20 public immutable bondToken;
-    IMarketFactory public immutable marketFactory;
-    IMarketResolver public immutable marketResolver;
+
+    // ──────────────────────────────────────────────
+    // Cross-references (set post-deploy via initialize)
+    // ──────────────────────────────────────────────
+
+    IMarketFactory public marketFactory;
+    IMarketResolver public marketResolver;
 
     // ──────────────────────────────────────────────
     // Configuration
@@ -68,25 +74,32 @@ contract ClovOracleAdapter is IClovOracleAdapter, Ownable, Pausable, ReentrancyG
     constructor(
         address _umaOracle,
         address _bondToken,
-        address _marketFactory,
-        address _marketResolver,
         uint256 _bondAmount,
         uint64 _assertionLiveness
     ) Ownable(msg.sender) {
-        if (
-            _umaOracle == address(0) || _bondToken == address(0) || _marketFactory == address(0)
-                || _marketResolver == address(0)
-        ) {
+        if (_umaOracle == address(0) || _bondToken == address(0)) {
             revert ZeroAddress();
         }
 
         umaOracle = IOptimisticOracleV3(_umaOracle);
         bondToken = IERC20(_bondToken);
-        marketFactory = IMarketFactory(_marketFactory);
-        marketResolver = IMarketResolver(_marketResolver);
         bondAmount = _bondAmount;
         assertionLiveness = _assertionLiveness;
         defaultIdentifier = umaOracle.defaultIdentifier();
+    }
+
+    /// @notice One-time initialization of cross-references (resolves circular dependency)
+    /// @param _marketFactory Address of the MarketFactory
+    /// @param _marketResolver Address of the MarketResolver
+    function initialize(address _marketFactory, address _marketResolver) external onlyOwner {
+        if (address(marketFactory) != address(0) || address(marketResolver) != address(0)) {
+            revert AlreadyInitialized();
+        }
+        if (_marketFactory == address(0) || _marketResolver == address(0)) {
+            revert ZeroAddress();
+        }
+        marketFactory = IMarketFactory(_marketFactory);
+        marketResolver = IMarketResolver(_marketResolver);
     }
 
     // ──────────────────────────────────────────────

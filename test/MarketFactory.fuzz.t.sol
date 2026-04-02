@@ -22,13 +22,11 @@ contract MarketFactoryHarness is MarketFactory {
         address _collateralToken,
         address _conditionalTokens,
         address _fpmmFactory,
-        address _oracleAdapter,
-        address _marketResolver,
         uint256 _creationDeposit,
         uint256 _tradingFee
     )
         MarketFactory(
-            _collateralToken, _conditionalTokens, _fpmmFactory, _oracleAdapter, _marketResolver, _creationDeposit, _tradingFee
+            _collateralToken, _conditionalTokens, _fpmmFactory, _creationDeposit, _tradingFee
         )
     {}
 
@@ -55,8 +53,9 @@ contract MarketFactoryFuzzTest is Test {
     function setUp() public {
         usdc = new MockERC20();
         factory = new MarketFactoryHarness(
-            address(usdc), conditionalTokens, fpmmFactory, oracleAdapter, marketResolver, CREATION_DEPOSIT, TRADING_FEE
+            address(usdc), conditionalTokens, fpmmFactory, CREATION_DEPOSIT, TRADING_FEE
         );
+        factory.initialize(oracleAdapter, marketResolver);
 
         vm.mockCall(conditionalTokens, abi.encodeWithSelector(IConditionalTokens.prepareCondition.selector), abi.encode());
         vm.mockCall(
