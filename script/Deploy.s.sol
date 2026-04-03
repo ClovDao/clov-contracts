@@ -21,7 +21,25 @@ contract Deploy is Script {
     uint256 constant BOND_AMOUNT = 1e6; // 1 USDC bond for UMA assertions
     uint64 constant ASSERTION_LIVENESS = 7200; // 2 hours dispute window
 
+    // ──────────────────────────────────────────────────────────────────────────
+    // MAINNET DEPLOYMENT WARNING
+    // ──────────────────────────────────────────────────────────────────────────
+    // This script uses a raw private key (PRIVATE_KEY env var) and is intended
+    // for TESTNET deployments ONLY (Polygon Amoy, chain ID 80002).
+    //
+    // For mainnet / production deployment:
+    //   1. Use a hardware wallet (Ledger / Trezor) via --ledger flag.
+    //   2. Deploy behind a Safe (Gnosis Safe) multisig with an appropriate
+    //      threshold (e.g. 2-of-3 or 3-of-5).
+    //   3. Transfer contract ownership to the multisig immediately after deploy.
+    //   4. Never expose private keys in environment variables on production
+    //      machines.
+    // ──────────────────────────────────────────────────────────────────────────
+
     function run() external {
+        // Chain ID guard — prevent accidental mainnet deployment
+        require(block.chainid == 80002, "TESTNET ONLY: Amoy chain ID required");
+
         uint256 deployerPrivateKey = vm.envUint("PRIVATE_KEY");
         address deployer = vm.addr(deployerPrivateKey);
 
