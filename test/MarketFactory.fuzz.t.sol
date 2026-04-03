@@ -116,7 +116,7 @@ contract MarketFactoryFuzzTest is Test {
     }
 
     function testFuzz_createMarket_storesCorrectDeposit(uint256 deposit) public {
-        deposit = bound(deposit, 0, 100_000e6);
+        deposit = bound(deposit, factory.MIN_CREATION_DEPOSIT(), 100_000e6);
 
         // Update creation deposit to fuzzed value
         factory.updateCreationDeposit(deposit);
@@ -190,9 +190,18 @@ contract MarketFactoryFuzzTest is Test {
     // updateCreationDeposit fuzz
     // ──────────────────────────────────────────────
 
-    function testFuzz_updateCreationDeposit_acceptsAnyValue(uint256 deposit) public {
+    function testFuzz_updateCreationDeposit_acceptsValidValues(uint256 deposit) public {
+        deposit = bound(deposit, factory.MIN_CREATION_DEPOSIT(), type(uint256).max);
         factory.updateCreationDeposit(deposit);
         assertEq(factory.creationDeposit(), deposit);
+    }
+
+    function testFuzz_updateCreationDeposit_revertsBelowMinimum(uint256 deposit) public {
+        deposit = bound(deposit, 0, factory.MIN_CREATION_DEPOSIT() - 1);
+        vm.expectRevert(
+            abi.encodeWithSelector(MarketFactory.DepositBelowMinimum.selector, deposit, factory.MIN_CREATION_DEPOSIT())
+        );
+        factory.updateCreationDeposit(deposit);
     }
 
     function testFuzz_updateCreationDeposit_onlyOwner(address caller) public {
@@ -208,7 +217,7 @@ contract MarketFactoryFuzzTest is Test {
     // ──────────────────────────────────────────────
 
     function testFuzz_refundCreationDeposit_refundsExactAmount(uint256 deposit) public {
-        deposit = bound(deposit, 1, 100_000e6);
+        deposit = bound(deposit, factory.MIN_CREATION_DEPOSIT(), 100_000e6);
         factory.updateCreationDeposit(deposit);
 
         address creator = makeAddr("fuzzCreator");
@@ -263,10 +272,11 @@ contract MarketFactoryFuzzTest is Test {
         factory.refundCreationDeposit(marketId);
     }
 
-    function testFuzz_refundCreationDeposit_revertsForNonResolvedStatus(uint8 statusRaw) public {
-        // Only statuses 0-4 are valid, exclude Resolved (3)
+    function testFuzz_refundCreationDeposit_revertsForNonTerminalStatus(uint8 statusRaw) public {
+        // Only statuses 0-4 are valid, exclude terminal states: Resolved (3) and Cancelled (4)
         statusRaw = uint8(bound(statusRaw, 0, 4));
         vm.assume(statusRaw != uint8(IMarketFactory.MarketStatus.Resolved));
+        vm.assume(statusRaw != uint8(IMarketFactory.MarketStatus.Cancelled));
 
         address creator = makeAddr("fuzzCreator");
         uint256 totalCost = CREATION_DEPOSIT + 100e6;
@@ -286,7 +296,173 @@ contract MarketFactoryFuzzTest is Test {
         factory.setMarketStatus(marketId, IMarketFactory.MarketStatus(statusRaw));
 
         vm.prank(creator);
-        vm.expectRevert(abi.encodeWithSelector(MarketFactory.MarketNotResolved.selector, marketId));
+        vm.expectRevert(abi.encodeWithSelector(MarketFactory.MarketNotResolvedOrCancelled.selector, marketId));
         factory.refundCreationDeposit(marketId);
+    }
+
+    // ──────────────────────────────────────────────
+    // State Transition Validation fuzz (SH-T01)
+    // ──────────────────────────────────────────────
+
+    /// @dev Returns true if (from, to) is a valid state transition
+    function _isValidTransition(IMarketFactory.MarketStatus from, IMarketFactory.MarketStatus to)
+        internal
+        pure
+        returns (bool)
+    {
+        // Created → Active
+        if (from == IMarketFactory.MarketStatus.Created && to == IMarketFactory.MarketStatus.Active) return true;
+        // Active → Resolving
+        if (from == IMarketFactory.MarketStatus.Active && to == IMarketFactory.MarketStatus.Resolving) return true;
+        // Active → Cancelled
+        if (from == IMarketFactory.MarketStatus.Active && to == IMarketFactory.MarketStatus.Cancelled) return true;
+        // Resolving → Active
+        if (from == IMarketFactory.MarketStatus.Resolving && to == IMarketFactory.MarketStatus.Active) return true;
+        // Resolving → Cancelled (emergency cancel during dispute)
+        if (from == IMarketFactory.MarketStatus.Resolving && to == IMarketFactory.MarketStatus.Cancelled) return true;
+        // Resolving → Resolved
+        if (from == IMarketFactory.MarketStatus.Resolving && to == IMarketFactory.MarketStatus.Resolved) return true;
+        return false;
+    }
+
+    /// @notice Fuzz all 5×5 state transition combinations — only valid ones succeed
+    function testFuzz_stateTransition_allCombinations(uint8 fromRaw, uint8 toRaw) public {
+        fromRaw = uint8(bound(fromRaw, 0, 4));
+        toRaw = uint8(bound(toRaw, 0, 4));
+
+        IMarketFactory.MarketStatus from = IMarketFactory.MarketStatus(fromRaw);
+        IMarketFactory.MarketStatus to = IMarketFactory.MarketStatus(toRaw);
+
+        // Create a market and force it into the `from` state via harness
+        address creator = makeAddr("fuzzCreator");
+        uint256 totalCost = CREATION_DEPOSIT + 100e6;
+        usdc.mint(creator, totalCost);
+
+        vm.startPrank(creator);
+        usdc.approve(address(factory), totalCost);
+
+        uint256[] memory odds = new uint256[](2);
+        odds[0] = 50;
+        odds[1] = 50;
+
+        uint256 marketId =
+            factory.createMarket("ipfs://fuzz", block.timestamp + 2 hours, IMarketFactory.Category.Sports, 100e6, odds);
+        vm.stopPrank();
+
+        // Force market into the `from` status
+        factory.setMarketStatus(marketId, from);
+
+        // Attempt transition as oracleAdapter
+        if (_isValidTransition(from, to)) {
+            vm.prank(oracleAdapter);
+            factory.updateMarketStatus(marketId, to);
+            assertEq(uint8(factory.getMarket(marketId).status), uint8(to));
+        } else {
+            vm.prank(oracleAdapter);
+            vm.expectRevert(
+                abi.encodeWithSelector(MarketFactory.InvalidStateTransition.selector, from, to)
+            );
+            factory.updateMarketStatus(marketId, to);
+        }
+    }
+
+    /// @notice Explicitly test all 5 valid transitions succeed
+    function test_stateTransition_validTransitions() public {
+        _testValidTransition(IMarketFactory.MarketStatus.Created, IMarketFactory.MarketStatus.Active);
+        _testValidTransition(IMarketFactory.MarketStatus.Active, IMarketFactory.MarketStatus.Resolving);
+        _testValidTransition(IMarketFactory.MarketStatus.Active, IMarketFactory.MarketStatus.Cancelled);
+        _testValidTransition(IMarketFactory.MarketStatus.Resolving, IMarketFactory.MarketStatus.Active);
+        _testValidTransition(IMarketFactory.MarketStatus.Resolving, IMarketFactory.MarketStatus.Cancelled);
+        _testValidTransition(IMarketFactory.MarketStatus.Resolving, IMarketFactory.MarketStatus.Resolved);
+    }
+
+    function _testValidTransition(IMarketFactory.MarketStatus from, IMarketFactory.MarketStatus to) internal {
+        address creator = makeAddr("transitionCreator");
+        uint256 totalCost = CREATION_DEPOSIT + 100e6;
+        usdc.mint(creator, totalCost);
+
+        vm.startPrank(creator);
+        usdc.approve(address(factory), totalCost);
+
+        uint256[] memory odds = new uint256[](2);
+        odds[0] = 50;
+        odds[1] = 50;
+
+        uint256 marketId =
+            factory.createMarket("ipfs://transition", block.timestamp + 2 hours, IMarketFactory.Category.Sports, 100e6, odds);
+        vm.stopPrank();
+
+        factory.setMarketStatus(marketId, from);
+
+        vm.prank(oracleAdapter);
+        factory.updateMarketStatus(marketId, to);
+
+        assertEq(uint8(factory.getMarket(marketId).status), uint8(to));
+    }
+
+    /// @notice Resolved is a terminal state — no transitions out
+    function testFuzz_stateTransition_resolvedIsTerminal(uint8 toRaw) public {
+        toRaw = uint8(bound(toRaw, 0, 4));
+        IMarketFactory.MarketStatus to = IMarketFactory.MarketStatus(toRaw);
+
+        address creator = makeAddr("terminalCreator");
+        uint256 totalCost = CREATION_DEPOSIT + 100e6;
+        usdc.mint(creator, totalCost);
+
+        vm.startPrank(creator);
+        usdc.approve(address(factory), totalCost);
+
+        uint256[] memory odds = new uint256[](2);
+        odds[0] = 50;
+        odds[1] = 50;
+
+        uint256 marketId =
+            factory.createMarket("ipfs://terminal", block.timestamp + 2 hours, IMarketFactory.Category.Sports, 100e6, odds);
+        vm.stopPrank();
+
+        factory.setMarketStatus(marketId, IMarketFactory.MarketStatus.Resolved);
+
+        vm.prank(oracleAdapter);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                MarketFactory.InvalidStateTransition.selector,
+                IMarketFactory.MarketStatus.Resolved,
+                to
+            )
+        );
+        factory.updateMarketStatus(marketId, to);
+    }
+
+    /// @notice Cancelled is a terminal state — no transitions out
+    function testFuzz_stateTransition_cancelledIsTerminal(uint8 toRaw) public {
+        toRaw = uint8(bound(toRaw, 0, 4));
+        IMarketFactory.MarketStatus to = IMarketFactory.MarketStatus(toRaw);
+
+        address creator = makeAddr("terminalCreator");
+        uint256 totalCost = CREATION_DEPOSIT + 100e6;
+        usdc.mint(creator, totalCost);
+
+        vm.startPrank(creator);
+        usdc.approve(address(factory), totalCost);
+
+        uint256[] memory odds = new uint256[](2);
+        odds[0] = 50;
+        odds[1] = 50;
+
+        uint256 marketId =
+            factory.createMarket("ipfs://terminal", block.timestamp + 2 hours, IMarketFactory.Category.Sports, 100e6, odds);
+        vm.stopPrank();
+
+        factory.setMarketStatus(marketId, IMarketFactory.MarketStatus.Cancelled);
+
+        vm.prank(oracleAdapter);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                MarketFactory.InvalidStateTransition.selector,
+                IMarketFactory.MarketStatus.Cancelled,
+                to
+            )
+        );
+        factory.updateMarketStatus(marketId, to);
     }
 }

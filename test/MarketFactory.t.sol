@@ -334,9 +334,25 @@ contract MarketFactoryTest is Test {
         assertEq(factory.creationDeposit(), 20e6);
     }
 
-    function test_updateCreationDeposit_canSetToZero() public {
+    function test_updateCreationDeposit_revertsOnZero() public {
+        vm.expectRevert(
+            abi.encodeWithSelector(MarketFactory.DepositBelowMinimum.selector, 0, factory.MIN_CREATION_DEPOSIT())
+        );
         factory.updateCreationDeposit(0);
-        assertEq(factory.creationDeposit(), 0);
+    }
+
+    function test_updateCreationDeposit_revertsWhenBelowMinimum() public {
+        uint256 belowMin = factory.MIN_CREATION_DEPOSIT() - 1;
+        vm.expectRevert(
+            abi.encodeWithSelector(MarketFactory.DepositBelowMinimum.selector, belowMin, factory.MIN_CREATION_DEPOSIT())
+        );
+        factory.updateCreationDeposit(belowMin);
+    }
+
+    function test_updateCreationDeposit_succeedsAtMinimum() public {
+        uint256 minDeposit = factory.MIN_CREATION_DEPOSIT();
+        factory.updateCreationDeposit(minDeposit);
+        assertEq(factory.creationDeposit(), minDeposit);
     }
 
     function test_updateCreationDeposit_affectsNewMarkets() public {
@@ -446,7 +462,7 @@ contract MarketFactoryTest is Test {
         // Status is Active (default from createMarket)
 
         vm.prank(alice);
-        vm.expectRevert(abi.encodeWithSelector(MarketFactory.MarketNotResolved.selector, 0));
+        vm.expectRevert(abi.encodeWithSelector(MarketFactory.MarketNotResolvedOrCancelled.selector, 0));
         factory.refundCreationDeposit(0);
     }
 
@@ -476,7 +492,7 @@ contract MarketFactoryTest is Test {
         factory.setMarketStatus(0, IMarketFactory.MarketStatus.Created);
 
         vm.prank(alice);
-        vm.expectRevert(abi.encodeWithSelector(MarketFactory.MarketNotResolved.selector, 0));
+        vm.expectRevert(abi.encodeWithSelector(MarketFactory.MarketNotResolvedOrCancelled.selector, 0));
         factory.refundCreationDeposit(0);
     }
 
@@ -485,16 +501,170 @@ contract MarketFactoryTest is Test {
         factory.setMarketStatus(0, IMarketFactory.MarketStatus.Resolving);
 
         vm.prank(alice);
-        vm.expectRevert(abi.encodeWithSelector(MarketFactory.MarketNotResolved.selector, 0));
+        vm.expectRevert(abi.encodeWithSelector(MarketFactory.MarketNotResolvedOrCancelled.selector, 0));
         factory.refundCreationDeposit(0);
     }
 
-    function test_refundCreationDeposit_revertsForStatusCancelled() public {
+    function test_refundCreationDeposit_worksForCancelledMarket() public {
         _createDefaultMarket(alice);
         factory.setMarketStatus(0, IMarketFactory.MarketStatus.Cancelled);
 
+        uint256 aliceBalanceBefore = usdc.balanceOf(alice);
+
         vm.prank(alice);
-        vm.expectRevert(abi.encodeWithSelector(MarketFactory.MarketNotResolved.selector, 0));
         factory.refundCreationDeposit(0);
+
+        assertEq(usdc.balanceOf(alice), aliceBalanceBefore + CREATION_DEPOSIT);
+        assertEq(factory.getMarket(0).creationDeposit, 0);
+    }
+
+    // ──────────────────────────────────────────────
+    // cancelMarket (SH-T02)
+    // ──────────────────────────────────────────────
+
+    function test_cancelMarket_activeMarket() public {
+        uint256 marketId = _createDefaultMarket(alice);
+
+        vm.expectEmit(true, true, false, false);
+        emit IMarketFactory.MarketCancelled(marketId, owner);
+
+        vm.expectEmit(true, false, false, true);
+        emit IMarketFactory.MarketStatusChanged(marketId, IMarketFactory.MarketStatus.Cancelled);
+
+        factory.cancelMarket(marketId);
+
+        assertEq(uint8(factory.getMarket(marketId).status), uint8(IMarketFactory.MarketStatus.Cancelled));
+    }
+
+    function test_cancelMarket_resolvingMarket() public {
+        uint256 marketId = _createDefaultMarket(alice);
+        factory.setMarketStatus(marketId, IMarketFactory.MarketStatus.Resolving);
+
+        factory.cancelMarket(marketId);
+
+        assertEq(uint8(factory.getMarket(marketId).status), uint8(IMarketFactory.MarketStatus.Cancelled));
+    }
+
+    function test_cancelMarket_revertsForResolvedMarket() public {
+        uint256 marketId = _createDefaultMarket(alice);
+        factory.setMarketStatus(marketId, IMarketFactory.MarketStatus.Resolved);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                MarketFactory.InvalidStateTransition.selector,
+                IMarketFactory.MarketStatus.Resolved,
+                IMarketFactory.MarketStatus.Cancelled
+            )
+        );
+        factory.cancelMarket(marketId);
+    }
+
+    function test_cancelMarket_revertsForAlreadyCancelled() public {
+        uint256 marketId = _createDefaultMarket(alice);
+        factory.cancelMarket(marketId);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                MarketFactory.InvalidStateTransition.selector,
+                IMarketFactory.MarketStatus.Cancelled,
+                IMarketFactory.MarketStatus.Cancelled
+            )
+        );
+        factory.cancelMarket(marketId);
+    }
+
+    function test_cancelMarket_revertsForNonOwner() public {
+        uint256 marketId = _createDefaultMarket(alice);
+
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, alice));
+        factory.cancelMarket(marketId);
+    }
+
+    function test_cancelMarket_revertsForNonexistentMarket() public {
+        vm.expectRevert(abi.encodeWithSelector(MarketFactory.MarketDoesNotExist.selector, 999));
+        factory.cancelMarket(999);
+    }
+
+    // ──────────────────────────────────────────────
+    // questionId collision protection (SH-T04)
+    // ──────────────────────────────────────────────
+
+    function test_questionId_differsAcrossFactoryInstances() public {
+        // Deploy a second factory with identical constructor args
+        MarketFactoryHarness factory2 = new MarketFactoryHarness(
+            address(usdc), conditionalTokens, fpmmFactory, CREATION_DEPOSIT, TRADING_FEE
+        );
+        factory2.initialize(oracleAdapter, marketResolver);
+
+        // Mock calls for factory2 as well
+        vm.mockCall(conditionalTokens, abi.encodeWithSelector(IConditionalTokens.prepareCondition.selector), abi.encode());
+        vm.mockCall(
+            conditionalTokens,
+            abi.encodeWithSelector(IConditionalTokens.getConditionId.selector),
+            abi.encode(MOCK_CONDITION_ID)
+        );
+        vm.mockCall(
+            fpmmFactory,
+            abi.encodeWithSelector(IFPMMDeterministicFactory.create2FixedProductMarketMaker.selector),
+            abi.encode(mockFpmm)
+        );
+
+        // Create identical markets on both factories from the same sender at the same timestamp
+        uint256 totalCost = CREATION_DEPOSIT + INITIAL_LIQUIDITY;
+
+        usdc.mint(alice, totalCost * 2);
+        vm.startPrank(alice);
+        usdc.approve(address(factory), totalCost);
+        usdc.approve(address(factory2), totalCost);
+
+        uint256[] memory odds = new uint256[](2);
+        odds[0] = 50;
+        odds[1] = 50;
+
+        uint256 id1 = factory.createMarket("ipfs://metadata", block.timestamp + 2 hours, IMarketFactory.Category.Sports, INITIAL_LIQUIDITY, odds);
+        uint256 id2 = factory2.createMarket("ipfs://metadata", block.timestamp + 2 hours, IMarketFactory.Category.Sports, INITIAL_LIQUIDITY, odds);
+        vm.stopPrank();
+
+        // questionIds MUST differ because address(this) differs between factories
+        bytes32 qid1 = factory.getMarket(id1).questionId;
+        bytes32 qid2 = factory2.getMarket(id2).questionId;
+
+        assertTrue(qid1 != bytes32(0), "questionId1 should not be zero");
+        assertTrue(qid2 != bytes32(0), "questionId2 should not be zero");
+        assertTrue(qid1 != qid2, "questionIds from different factory instances must differ");
+    }
+
+    function test_questionId_includesChainId() public {
+        // Verify the questionId incorporates block.chainid by computing it manually
+        uint256 totalCost = CREATION_DEPOSIT + INITIAL_LIQUIDITY;
+        usdc.mint(alice, totalCost);
+
+        vm.startPrank(alice);
+        usdc.approve(address(factory), totalCost);
+
+        uint256[] memory odds = new uint256[](2);
+        odds[0] = 50;
+        odds[1] = 50;
+
+        uint256 marketId = factory.createMarket("ipfs://metadata", block.timestamp + 2 hours, IMarketFactory.Category.Sports, INITIAL_LIQUIDITY, odds);
+        vm.stopPrank();
+
+        bytes32 expectedQuestionId = keccak256(abi.encodePacked(block.chainid, address(factory), uint256(0), alice, block.timestamp));
+        assertEq(factory.getMarket(marketId).questionId, expectedQuestionId);
+    }
+
+    function test_cancelMarket_depositRefundAfterCancellation() public {
+        uint256 marketId = _createDefaultMarket(alice);
+
+        factory.cancelMarket(marketId);
+
+        uint256 aliceBalanceBefore = usdc.balanceOf(alice);
+
+        vm.prank(alice);
+        factory.refundCreationDeposit(marketId);
+
+        assertEq(usdc.balanceOf(alice), aliceBalanceBefore + CREATION_DEPOSIT);
+        assertEq(factory.getMarket(marketId).creationDeposit, 0);
     }
 }

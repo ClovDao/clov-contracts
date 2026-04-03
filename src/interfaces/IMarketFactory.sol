@@ -48,6 +48,8 @@ interface IMarketFactory {
 
     event TradingFeeUpdated(uint256 oldFee, uint256 newFee);
 
+    event MarketCancelled(uint256 indexed marketId, address indexed cancelledBy);
+
     function createMarket(
         string calldata metadataURI,
         uint256 resolutionTimestamp,
@@ -69,4 +71,6 @@ interface IMarketFactory {
     function refundCreationDeposit(uint256 marketId) external;
 
     function updateMarketStatus(uint256 marketId, MarketStatus newStatus) external;
+
+    function cancelMarket(uint256 marketId) external;
 }

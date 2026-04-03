@@ -30,6 +30,19 @@ contract ClovOracleAdapter is IClovOracleAdapter, Ownable, Pausable, ReentrancyG
     error AssertionAlreadySettled(bytes32 assertionId);
     error AlreadyInitialized();
 
+    /// @notice Thrown when a non-allowlisted address attempts to assert an outcome
+    error UnauthorizedAsserter(address caller);
+
+    // ──────────────────────────────────────────────
+    // Events
+    // ──────────────────────────────────────────────
+
+    /// @notice Emitted when an asserter is added to the allowlist
+    event AsserterAdded(address indexed asserter);
+
+    /// @notice Emitted when an asserter is removed from the allowlist
+    event AsserterRemoved(address indexed asserter);
+
     // ──────────────────────────────────────────────
     // External Contracts
     // ──────────────────────────────────────────────
@@ -67,6 +80,9 @@ contract ClovOracleAdapter is IClovOracleAdapter, Ownable, Pausable, ReentrancyG
     /// @notice marketId => active assertionId
     mapping(uint256 => bytes32) public marketToAssertion;
 
+    /// @notice Tracks addresses allowed to call assertOutcome
+    mapping(address => bool) public allowedAsserters;
+
     // ──────────────────────────────────────────────
     // Constructor
     // ──────────────────────────────────────────────
@@ -100,6 +116,10 @@ contract ClovOracleAdapter is IClovOracleAdapter, Ownable, Pausable, ReentrancyG
         }
         marketFactory = IMarketFactory(_marketFactory);
         marketResolver = IMarketResolver(_marketResolver);
+
+        // Owner is an asserter by default
+        allowedAsserters[msg.sender] = true;
+        emit AsserterAdded(msg.sender);
     }
 
     // ──────────────────────────────────────────────
@@ -114,6 +134,10 @@ contract ClovOracleAdapter is IClovOracleAdapter, Ownable, Pausable, ReentrancyG
         nonReentrant
         returns (bytes32)
     {
+        if (!allowedAsserters[msg.sender]) {
+            revert UnauthorizedAsserter(msg.sender);
+        }
+
         IMarketFactory.MarketData memory market = marketFactory.getMarket(marketId);
 
         // Market must be Active
@@ -266,6 +290,22 @@ contract ClovOracleAdapter is IClovOracleAdapter, Ownable, Pausable, ReentrancyG
     // ──────────────────────────────────────────────
     // Admin
     // ──────────────────────────────────────────────
+
+    /// @notice Adds an address to the asserter allowlist
+    /// @param asserter The address to allowlist
+    function addAsserter(address asserter) external onlyOwner {
+        if (asserter == address(0)) revert ZeroAddress();
+        allowedAsserters[asserter] = true;
+        emit AsserterAdded(asserter);
+    }
+
+    /// @notice Removes an address from the asserter allowlist
+    /// @param asserter The address to remove
+    function removeAsserter(address asserter) external onlyOwner {
+        if (asserter == address(0)) revert ZeroAddress();
+        allowedAsserters[asserter] = false;
+        emit AsserterRemoved(asserter);
+    }
 
     function pause() external onlyOwner {
         _pause();

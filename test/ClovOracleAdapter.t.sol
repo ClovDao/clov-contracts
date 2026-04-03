@@ -1039,4 +1039,94 @@ contract ClovOracleAdapterTest is Test {
         bytes32 assertionId = adapter.assertOutcome(marketId, true, alice);
         assertEq(assertionId, MOCK_ASSERTION_ID);
     }
+
+    // ──────────────────────────────────────────────
+    // Asserter Allowlist
+    // ──────────────────────────────────────────────
+
+    function test_ownerIsAsserterByDefault() public view {
+        assertTrue(adapter.allowedAsserters(owner));
+    }
+
+    function test_assertOutcome_revertsForUnauthorizedAsserter() public {
+        uint256 marketId = 0;
+        _mockActiveMarket(marketId);
+
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(ClovOracleAdapter.UnauthorizedAsserter.selector, alice));
+        adapter.assertOutcome(marketId, true, alice);
+    }
+
+    function test_assertOutcome_succeedsForAddedAsserter() public {
+        // Add alice as asserter
+        adapter.addAsserter(alice);
+
+        uint256 marketId = 0;
+        _mockActiveMarket(marketId);
+
+        bondToken.mint(alice, BOND_AMOUNT);
+        vm.startPrank(alice);
+        bondToken.approve(address(adapter), BOND_AMOUNT);
+
+        vm.mockCall(umaOracle, abi.encodeWithSelector(IOptimisticOracleV3.assertTruth.selector), abi.encode(MOCK_ASSERTION_ID));
+        vm.mockCall(marketFactory, abi.encodeWithSelector(IMarketFactory.updateMarketStatus.selector), abi.encode());
+
+        bytes32 assertionId = adapter.assertOutcome(marketId, true, alice);
+        vm.stopPrank();
+
+        assertEq(assertionId, MOCK_ASSERTION_ID);
+    }
+
+    function test_assertOutcome_revertsForRemovedAsserter() public {
+        // Add then remove alice
+        adapter.addAsserter(alice);
+        adapter.removeAsserter(alice);
+
+        uint256 marketId = 0;
+        _mockActiveMarket(marketId);
+
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(ClovOracleAdapter.UnauthorizedAsserter.selector, alice));
+        adapter.assertOutcome(marketId, true, alice);
+    }
+
+    function test_addAsserter_onlyOwner() public {
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, alice));
+        adapter.addAsserter(bob);
+    }
+
+    function test_removeAsserter_onlyOwner() public {
+        adapter.addAsserter(bob);
+
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, alice));
+        adapter.removeAsserter(bob);
+    }
+
+    function test_addAsserter_emitsAsserterAdded() public {
+        vm.expectEmit(true, false, false, false);
+        emit ClovOracleAdapter.AsserterAdded(alice);
+
+        adapter.addAsserter(alice);
+    }
+
+    function test_removeAsserter_emitsAsserterRemoved() public {
+        adapter.addAsserter(alice);
+
+        vm.expectEmit(true, false, false, false);
+        emit ClovOracleAdapter.AsserterRemoved(alice);
+
+        adapter.removeAsserter(alice);
+    }
+
+    function test_addAsserter_revertsOnZeroAddress() public {
+        vm.expectRevert(ClovOracleAdapter.ZeroAddress.selector);
+        adapter.addAsserter(address(0));
+    }
+
+    function test_removeAsserter_revertsOnZeroAddress() public {
+        vm.expectRevert(ClovOracleAdapter.ZeroAddress.selector);
+        adapter.removeAsserter(address(0));
+    }
 }

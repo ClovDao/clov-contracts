@@ -23,12 +23,18 @@ contract MarketFactory is IMarketFactory, Ownable, Pausable, ReentrancyGuard {
     error ZeroAddress();
     error InvalidResolutionTimestamp();
     error InsufficientInitialLiquidity();
-    error MarketNotResolved(uint256 marketId);
+    error MarketNotResolvedOrCancelled(uint256 marketId);
     error NotMarketCreator(uint256 marketId, address caller);
     error DepositAlreadyRefunded(uint256 marketId);
     error InvalidTradingFee(uint256 fee, uint256 maxFee);
     error UnauthorizedStatusUpdate(address caller);
+    error InvalidStateTransition(MarketStatus currentStatus, MarketStatus newStatus);
     error AlreadyInitialized();
+    error MarketDoesNotExist(uint256 marketId);
+    error DepositBelowMinimum(uint256 provided, uint256 minimum);
+
+    /// @notice Minimum creation deposit: 1 USDC (6 decimals)
+    uint256 public constant MIN_CREATION_DEPOSIT = 1e6;
 
     /// @notice Maximum trading fee: 10% (1000 basis points)
     uint256 public constant MAX_TRADING_FEE = 1000;
@@ -86,6 +92,10 @@ contract MarketFactory is IMarketFactory, Ownable, Pausable, ReentrancyGuard {
             revert ZeroAddress();
         }
 
+        if (_creationDeposit < MIN_CREATION_DEPOSIT) {
+            revert DepositBelowMinimum(_creationDeposit, MIN_CREATION_DEPOSIT);
+        }
+
         collateralToken = IERC20(_collateralToken);
         conditionalTokens = IConditionalTokens(_conditionalTokens);
         fpmmFactory = IFPMMDeterministicFactory(_fpmmFactory);
@@ -112,6 +122,10 @@ contract MarketFactory is IMarketFactory, Ownable, Pausable, ReentrancyGuard {
     // ──────────────────────────────────────────────
 
     /// @inheritdoc IMarketFactory
+    /// @dev Front-running vector: a griefing actor could observe a pending createMarket tx and
+    ///      front-run it with an identical market. This is low risk on Polygon (2 s blocks reduce
+    ///      the mempool window) and economically disincentivized by the creationDeposit bond, which
+    ///      the front-runner would forfeit if their copycat market is not legitimately resolved.
     function createMarket(
         string calldata metadataURI,
         uint256 resolutionTimestamp,
@@ -132,8 +146,8 @@ contract MarketFactory is IMarketFactory, Ownable, Pausable, ReentrancyGuard {
         // 3. Transfer creationDeposit + initialLiquidity from msg.sender
         collateralToken.safeTransferFrom(msg.sender, address(this), creationDeposit + initialLiquidity);
 
-        // 4. Generate questionId
-        bytes32 questionId = keccak256(abi.encodePacked(marketCount, msg.sender, block.timestamp));
+        // 4. Generate questionId (includes block.chainid and address(this) to prevent cross-chain/cross-deployment collisions)
+        bytes32 questionId = keccak256(abi.encodePacked(block.chainid, address(this), marketCount, msg.sender, block.timestamp));
 
         // 5. Prepare condition on ConditionalTokens (binary outcome = 2)
         conditionalTokens.prepareCondition(marketResolver, questionId, 2);
@@ -204,6 +218,9 @@ contract MarketFactory is IMarketFactory, Ownable, Pausable, ReentrancyGuard {
 
     /// @inheritdoc IMarketFactory
     function updateCreationDeposit(uint256 newDeposit) external override onlyOwner {
+        if (newDeposit < MIN_CREATION_DEPOSIT) {
+            revert DepositBelowMinimum(newDeposit, MIN_CREATION_DEPOSIT);
+        }
         uint256 oldDeposit = creationDeposit;
         creationDeposit = newDeposit;
         emit CreationDepositUpdated(oldDeposit, newDeposit);
@@ -224,8 +241,35 @@ contract MarketFactory is IMarketFactory, Ownable, Pausable, ReentrancyGuard {
         if (msg.sender != oracleAdapter && msg.sender != marketResolver) {
             revert UnauthorizedStatusUpdate(msg.sender);
         }
+
+        MarketStatus currentStatus = markets[marketId].status;
+        if (!_isValidTransition(currentStatus, newStatus)) {
+            revert InvalidStateTransition(currentStatus, newStatus);
+        }
+
         markets[marketId].status = newStatus;
         emit MarketStatusChanged(marketId, newStatus);
+    }
+
+    /// @notice Emergency cancel a market — returns deposits, prevents further trading
+    /// @dev Only callable by the contract owner. Validates state transition via _isValidTransition.
+    /// @param marketId The ID of the market to cancel
+    function cancelMarket(uint256 marketId) external override onlyOwner {
+        MarketData storage m = markets[marketId];
+
+        if (m.creator == address(0)) {
+            revert MarketDoesNotExist(marketId);
+        }
+
+        MarketStatus currentStatus = m.status;
+        if (!_isValidTransition(currentStatus, MarketStatus.Cancelled)) {
+            revert InvalidStateTransition(currentStatus, MarketStatus.Cancelled);
+        }
+
+        m.status = MarketStatus.Cancelled;
+
+        emit MarketCancelled(marketId, msg.sender);
+        emit MarketStatusChanged(marketId, MarketStatus.Cancelled);
     }
 
     // ──────────────────────────────────────────────
@@ -242,11 +286,11 @@ contract MarketFactory is IMarketFactory, Ownable, Pausable, ReentrancyGuard {
     // ──────────────────────────────────────────────
 
     /// @inheritdoc IMarketFactory
-    function refundCreationDeposit(uint256 marketId) external override {
+    function refundCreationDeposit(uint256 marketId) external override nonReentrant {
         MarketData storage m = markets[marketId];
 
-        if (m.status != MarketStatus.Resolved) {
-            revert MarketNotResolved(marketId);
+        if (m.status != MarketStatus.Resolved && m.status != MarketStatus.Cancelled) {
+            revert MarketNotResolvedOrCancelled(marketId);
         }
         if (m.creator != msg.sender) {
             revert NotMarketCreator(marketId, msg.sender);
@@ -266,6 +310,31 @@ contract MarketFactory is IMarketFactory, Ownable, Pausable, ReentrancyGuard {
     // ──────────────────────────────────────────────
     // Internal Helpers
     // ──────────────────────────────────────────────
+
+    /// @dev Validates that a state transition is allowed
+    /// @param currentStatus The current status of the market
+    /// @param newStatus The proposed new status
+    /// @return valid True if the transition is allowed
+    function _isValidTransition(MarketStatus currentStatus, MarketStatus newStatus)
+        internal
+        pure
+        returns (bool valid)
+    {
+        // Created → Active
+        if (currentStatus == MarketStatus.Created && newStatus == MarketStatus.Active) return true;
+        // Active → Resolving
+        if (currentStatus == MarketStatus.Active && newStatus == MarketStatus.Resolving) return true;
+        // Active → Cancelled (emergency cancel)
+        if (currentStatus == MarketStatus.Active && newStatus == MarketStatus.Cancelled) return true;
+        // Resolving → Cancelled (emergency cancel during dispute)
+        if (currentStatus == MarketStatus.Resolving && newStatus == MarketStatus.Cancelled) return true;
+        // Resolving → Active (assertion disputed)
+        if (currentStatus == MarketStatus.Resolving && newStatus == MarketStatus.Active) return true;
+        // Resolving → Resolved (assertion confirmed)
+        if (currentStatus == MarketStatus.Resolving && newStatus == MarketStatus.Resolved) return true;
+        // All other transitions are invalid (Resolved and Cancelled are terminal)
+        return false;
+    }
 
     /// @dev Emits MarketCreated event reading from storage to avoid stack-too-deep
     function _emitMarketCreated(uint256 marketId, uint256 initialLiquidity) internal {
