@@ -11,15 +11,15 @@ interface IMarketFactory {
     }
 
     enum Category {
-        Sports,
-        Gaming,
-        Streams
+        Futbol,
+        Basquet,
+        Esports,
+        Otros
     }
 
     struct MarketData {
         bytes32 questionId;
         bytes32 conditionId;
-        address fpmm;
         address creator;
         string metadataURI;
         uint256 creationDeposit;
@@ -31,13 +31,11 @@ interface IMarketFactory {
     event MarketCreated(
         uint256 indexed marketId,
         address indexed creator,
-        address fpmm,
         bytes32 conditionId,
         bytes32 questionId,
         string metadataURI,
         uint256 resolutionTimestamp,
-        Category category,
-        uint256 initialLiquidity
+        Category category
     );
 
     event MarketStatusChanged(uint256 indexed marketId, MarketStatus newStatus);
@@ -46,16 +44,12 @@ interface IMarketFactory {
 
     event CreationDepositUpdated(uint256 oldDeposit, uint256 newDeposit);
 
-    event TradingFeeUpdated(uint256 oldFee, uint256 newFee);
-
     event MarketCancelled(uint256 indexed marketId, address indexed cancelledBy);
 
     function createMarket(
         string calldata metadataURI,
         uint256 resolutionTimestamp,
-        Category category,
-        uint256 initialLiquidity,
-        uint256[] calldata initialOdds
+        Category category
     ) external returns (uint256 marketId);
 
     function pauseMarketCreation() external;
@@ -63,8 +57,6 @@ interface IMarketFactory {
     function unpauseMarketCreation() external;
 
     function updateCreationDeposit(uint256 newDeposit) external;
-
-    function updateTradingFee(uint256 newFee) external;
 
     function getMarket(uint256 marketId) external view returns (MarketData memory);
 
