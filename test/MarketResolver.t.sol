@@ -19,7 +19,6 @@ contract MarketResolverTest is Test {
 
     bytes32 public constant MOCK_QUESTION_ID = keccak256("questionId-0");
     bytes32 public constant MOCK_CONDITION_ID = keccak256("conditionId-0");
-    address public constant MOCK_FPMM = address(0xF999);
 
     uint256 public constant MARKET_ID = 0;
 
@@ -55,13 +54,12 @@ contract MarketResolverTest is Test {
         IMarketFactory.MarketData memory market = IMarketFactory.MarketData({
             questionId: MOCK_QUESTION_ID,
             conditionId: MOCK_CONDITION_ID,
-            fpmm: MOCK_FPMM,
             creator: alice,
             metadataURI: "ipfs://metadata",
             creationDeposit: 10e6,
             resolutionTimestamp: block.timestamp - 1,
             status: status,
-            category: IMarketFactory.Category.Sports
+            category: IMarketFactory.Category.Futbol
         });
 
         vm.mockCall(
@@ -291,13 +289,12 @@ contract MarketResolverTest is Test {
         IMarketFactory.MarketData memory market1 = IMarketFactory.MarketData({
             questionId: questionId1,
             conditionId: MOCK_CONDITION_ID,
-            fpmm: MOCK_FPMM,
             creator: alice,
             metadataURI: "ipfs://m1",
             creationDeposit: 10e6,
             resolutionTimestamp: block.timestamp - 1,
             status: IMarketFactory.MarketStatus.Resolving,
-            category: IMarketFactory.Category.Sports
+            category: IMarketFactory.Category.Futbol
         });
         vm.mockCall(
             marketFactory,
@@ -309,13 +306,12 @@ contract MarketResolverTest is Test {
         IMarketFactory.MarketData memory market2 = IMarketFactory.MarketData({
             questionId: questionId2,
             conditionId: MOCK_CONDITION_ID,
-            fpmm: MOCK_FPMM,
             creator: alice,
             metadataURI: "ipfs://m2",
             creationDeposit: 10e6,
             resolutionTimestamp: block.timestamp - 1,
             status: IMarketFactory.MarketStatus.Resolving,
-            category: IMarketFactory.Category.Gaming
+            category: IMarketFactory.Category.Esports
         });
         vm.mockCall(
             marketFactory,

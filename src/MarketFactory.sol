@@ -7,12 +7,12 @@ import { ReentrancyGuard } from "@openzeppelin/contracts/utils/ReentrancyGuard.s
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { SafeERC20 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import { IConditionalTokens } from "./interfaces/IConditionalTokens.sol";
-import { IFPMMDeterministicFactory } from "./interfaces/IFPMMDeterministicFactory.sol";
 import { IMarketFactory } from "./interfaces/IMarketFactory.sol";
 
 /// @title MarketFactory
 /// @notice Factory contract for creating and managing prediction markets
-/// @dev Uses Gnosis Conditional Tokens + FPMM for market mechanics
+/// @dev Uses Gnosis Conditional Tokens for outcome tracking. Trading is handled
+///      externally by a CLOB (CTF Exchange), not by this contract.
 contract MarketFactory is IMarketFactory, Ownable, Pausable, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
@@ -22,11 +22,9 @@ contract MarketFactory is IMarketFactory, Ownable, Pausable, ReentrancyGuard {
 
     error ZeroAddress();
     error InvalidResolutionTimestamp();
-    error InsufficientInitialLiquidity();
     error MarketNotResolvedOrCancelled(uint256 marketId);
     error NotMarketCreator(uint256 marketId, address caller);
     error DepositAlreadyRefunded(uint256 marketId);
-    error InvalidTradingFee(uint256 fee, uint256 maxFee);
     error UnauthorizedStatusUpdate(address caller);
     error InvalidStateTransition(MarketStatus currentStatus, MarketStatus newStatus);
     error AlreadyInitialized();
@@ -36,16 +34,12 @@ contract MarketFactory is IMarketFactory, Ownable, Pausable, ReentrancyGuard {
     /// @notice Minimum creation deposit: 1 USDC (6 decimals)
     uint256 public constant MIN_CREATION_DEPOSIT = 1e6;
 
-    /// @notice Maximum trading fee: 10% (1000 basis points)
-    uint256 public constant MAX_TRADING_FEE = 1000;
-
     // ──────────────────────────────────────────────
     // Immutable / External Contracts
     // ──────────────────────────────────────────────
 
     IERC20 public immutable collateralToken;
     IConditionalTokens public immutable conditionalTokens;
-    IFPMMDeterministicFactory public immutable fpmmFactory;
 
     // ──────────────────────────────────────────────
     // Privileged Addresses (set post-deploy via initialize)
@@ -60,9 +54,6 @@ contract MarketFactory is IMarketFactory, Ownable, Pausable, ReentrancyGuard {
 
     /// @notice Anti-spam deposit required to create a market (in collateral token units)
     uint256 public creationDeposit;
-
-    /// @notice Trading fee for FPMM in basis points (e.g. 100 = 1%)
-    uint256 public tradingFee;
 
     // ──────────────────────────────────────────────
     // Market State
@@ -84,11 +75,9 @@ contract MarketFactory is IMarketFactory, Ownable, Pausable, ReentrancyGuard {
     constructor(
         address _collateralToken,
         address _conditionalTokens,
-        address _fpmmFactory,
-        uint256 _creationDeposit,
-        uint256 _tradingFee
+        uint256 _creationDeposit
     ) Ownable(msg.sender) {
-        if (_collateralToken == address(0) || _conditionalTokens == address(0) || _fpmmFactory == address(0)) {
+        if (_collateralToken == address(0) || _conditionalTokens == address(0)) {
             revert ZeroAddress();
         }
 
@@ -98,9 +87,7 @@ contract MarketFactory is IMarketFactory, Ownable, Pausable, ReentrancyGuard {
 
         collateralToken = IERC20(_collateralToken);
         conditionalTokens = IConditionalTokens(_conditionalTokens);
-        fpmmFactory = IFPMMDeterministicFactory(_fpmmFactory);
         creationDeposit = _creationDeposit;
-        tradingFee = _tradingFee;
     }
 
     /// @notice One-time initialization of cross-references (resolves circular dependency)
@@ -129,58 +116,31 @@ contract MarketFactory is IMarketFactory, Ownable, Pausable, ReentrancyGuard {
     function createMarket(
         string calldata metadataURI,
         uint256 resolutionTimestamp,
-        Category category,
-        uint256 initialLiquidity,
-        uint256[] calldata initialOdds
+        Category category
     ) external override whenNotPaused nonReentrant returns (uint256) {
         // 1. Validate resolution timestamp (must be at least 1 hour in the future)
         if (resolutionTimestamp <= block.timestamp + 1 hours) {
             revert InvalidResolutionTimestamp();
         }
 
-        // 2. Validate initial liquidity
-        if (initialLiquidity == 0) {
-            revert InsufficientInitialLiquidity();
-        }
+        // 2. Transfer creationDeposit from msg.sender (anti-spam bond)
+        collateralToken.safeTransferFrom(msg.sender, address(this), creationDeposit);
 
-        // 3. Transfer creationDeposit + initialLiquidity from msg.sender
-        collateralToken.safeTransferFrom(msg.sender, address(this), creationDeposit + initialLiquidity);
-
-        // 4. Generate questionId (includes block.chainid and address(this) to prevent cross-chain/cross-deployment collisions)
+        // 3. Generate questionId (includes block.chainid and address(this) to prevent cross-chain/cross-deployment collisions)
         bytes32 questionId = keccak256(abi.encodePacked(block.chainid, address(this), marketCount, msg.sender, block.timestamp));
 
-        // 5. Prepare condition on ConditionalTokens (binary outcome = 2)
+        // 4. Prepare condition on ConditionalTokens (binary outcome = 2)
         conditionalTokens.prepareCondition(marketResolver, questionId, 2);
 
-        // 6. Get conditionId
+        // 5. Get conditionId
         bytes32 conditionId = conditionalTokens.getConditionId(marketResolver, questionId, 2);
 
-        // 7. Approve collateralToken to fpmmFactory for initialLiquidity
-        collateralToken.forceApprove(address(fpmmFactory), initialLiquidity);
-
-        // 8. Build conditionIds array and create FPMM
-        address fpmm;
-        {
-            bytes32[] memory conditionIds = new bytes32[](1);
-            conditionIds[0] = conditionId;
-
-            fpmm = fpmmFactory.create2FixedProductMarketMaker(
-                conditionalTokens,
-                collateralToken,
-                conditionIds,
-                tradingFee,
-                initialLiquidity,
-                initialOdds
-            );
-        }
-
-        // 9. Store MarketData
+        // 6. Store MarketData
         uint256 marketId = marketCount;
 
         markets[marketId] = MarketData({
             questionId: questionId,
             conditionId: conditionId,
-            fpmm: fpmm,
             creator: msg.sender,
             metadataURI: metadataURI,
             creationDeposit: creationDeposit,
@@ -189,16 +149,23 @@ contract MarketFactory is IMarketFactory, Ownable, Pausable, ReentrancyGuard {
             category: category
         });
 
-        // 10. Store reverse lookup
+        // 7. Store reverse lookup
         questionIdToMarketId[questionId] = marketId;
 
-        // 11. Increment marketCount
+        // 8. Increment marketCount
         marketCount++;
 
-        // 12. Emit event (read from storage to reduce stack depth)
-        _emitMarketCreated(marketId, initialLiquidity);
+        // 9. Emit event
+        emit MarketCreated(
+            marketId,
+            msg.sender,
+            conditionId,
+            questionId,
+            metadataURI,
+            resolutionTimestamp,
+            category
+        );
 
-        // 13. Return marketId
         return marketId;
     }
 
@@ -224,16 +191,6 @@ contract MarketFactory is IMarketFactory, Ownable, Pausable, ReentrancyGuard {
         uint256 oldDeposit = creationDeposit;
         creationDeposit = newDeposit;
         emit CreationDepositUpdated(oldDeposit, newDeposit);
-    }
-
-    /// @inheritdoc IMarketFactory
-    function updateTradingFee(uint256 newFee) external override onlyOwner {
-        if (newFee > MAX_TRADING_FEE) {
-            revert InvalidTradingFee(newFee, MAX_TRADING_FEE);
-        }
-        uint256 oldFee = tradingFee;
-        tradingFee = newFee;
-        emit TradingFeeUpdated(oldFee, newFee);
     }
 
     /// @inheritdoc IMarketFactory
@@ -334,21 +291,5 @@ contract MarketFactory is IMarketFactory, Ownable, Pausable, ReentrancyGuard {
         if (currentStatus == MarketStatus.Resolving && newStatus == MarketStatus.Resolved) return true;
         // All other transitions are invalid (Resolved and Cancelled are terminal)
         return false;
-    }
-
-    /// @dev Emits MarketCreated event reading from storage to avoid stack-too-deep
-    function _emitMarketCreated(uint256 marketId, uint256 initialLiquidity) internal {
-        MarketData storage m = markets[marketId];
-        emit MarketCreated(
-            marketId,
-            m.creator,
-            m.fpmm,
-            m.conditionId,
-            m.questionId,
-            m.metadataURI,
-            m.resolutionTimestamp,
-            m.category,
-            initialLiquidity
-        );
     }
 }

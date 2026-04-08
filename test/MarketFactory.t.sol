@@ -5,7 +5,6 @@ import { Test } from "forge-std/Test.sol";
 import { MarketFactory } from "../src/MarketFactory.sol";
 import { IMarketFactory } from "../src/interfaces/IMarketFactory.sol";
 import { IConditionalTokens } from "../src/interfaces/IConditionalTokens.sol";
-import { IFPMMDeterministicFactory } from "../src/interfaces/IFPMMDeterministicFactory.sol";
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { ERC20 } from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
@@ -24,12 +23,10 @@ contract MarketFactoryHarness is MarketFactory {
     constructor(
         address _collateralToken,
         address _conditionalTokens,
-        address _fpmmFactory,
-        uint256 _creationDeposit,
-        uint256 _tradingFee
+        uint256 _creationDeposit
     )
         MarketFactory(
-            _collateralToken, _conditionalTokens, _fpmmFactory, _creationDeposit, _tradingFee
+            _collateralToken, _conditionalTokens, _creationDeposit
         )
     {}
 
@@ -47,14 +44,10 @@ contract MarketFactoryTest is Test {
     address public bob = makeAddr("bob");
 
     address public conditionalTokens = makeAddr("conditionalTokens");
-    address public fpmmFactory = makeAddr("fpmmFactory");
     address public oracleAdapter = makeAddr("oracleAdapter");
     address public marketResolver = makeAddr("marketResolver");
-    address public mockFpmm = makeAddr("mockFpmm");
 
     uint256 public constant CREATION_DEPOSIT = 10e6; // 10 USDC
-    uint256 public constant TRADING_FEE = 100; // 1% in BPS
-    uint256 public constant INITIAL_LIQUIDITY = 100e6; // 100 USDC
 
     bytes32 public constant MOCK_CONDITION_ID = keccak256("mockConditionId");
 
@@ -63,7 +56,7 @@ contract MarketFactoryTest is Test {
         usdc = new MockERC20();
 
         factory = new MarketFactoryHarness(
-            address(usdc), conditionalTokens, fpmmFactory, CREATION_DEPOSIT, TRADING_FEE
+            address(usdc), conditionalTokens, CREATION_DEPOSIT
         );
         factory.initialize(oracleAdapter, marketResolver);
 
@@ -76,13 +69,6 @@ contract MarketFactoryTest is Test {
             abi.encodeWithSelector(IConditionalTokens.getConditionId.selector),
             abi.encode(MOCK_CONDITION_ID)
         );
-
-        // Mock FPMMFactory.create2FixedProductMarketMaker — return mock FPMM address
-        vm.mockCall(
-            fpmmFactory,
-            abi.encodeWithSelector(IFPMMDeterministicFactory.create2FixedProductMarketMaker.selector),
-            abi.encode(mockFpmm)
-        );
     }
 
     // ──────────────────────────────────────────────
@@ -92,28 +78,23 @@ contract MarketFactoryTest is Test {
     function test_constructor_setsStateCorrectly() public view {
         assertEq(address(factory.collateralToken()), address(usdc));
         assertEq(address(factory.conditionalTokens()), conditionalTokens);
-        assertEq(address(factory.fpmmFactory()), fpmmFactory);
         assertEq(factory.oracleAdapter(), oracleAdapter);
         assertEq(factory.marketResolver(), marketResolver);
         assertEq(factory.creationDeposit(), CREATION_DEPOSIT);
-        assertEq(factory.tradingFee(), TRADING_FEE);
         assertEq(factory.marketCount(), 0);
         assertEq(factory.owner(), owner);
     }
 
     function test_constructor_revertsOnZeroAddress() public {
         vm.expectRevert(MarketFactory.ZeroAddress.selector);
-        new MarketFactoryHarness(address(0), conditionalTokens, fpmmFactory, CREATION_DEPOSIT, TRADING_FEE);
+        new MarketFactoryHarness(address(0), conditionalTokens, CREATION_DEPOSIT);
 
         vm.expectRevert(MarketFactory.ZeroAddress.selector);
-        new MarketFactoryHarness(address(usdc), address(0), fpmmFactory, CREATION_DEPOSIT, TRADING_FEE);
-
-        vm.expectRevert(MarketFactory.ZeroAddress.selector);
-        new MarketFactoryHarness(address(usdc), conditionalTokens, address(0), CREATION_DEPOSIT, TRADING_FEE);
+        new MarketFactoryHarness(address(usdc), address(0), CREATION_DEPOSIT);
     }
 
     function test_initialize_revertsOnZeroAddress() public {
-        MarketFactoryHarness f = new MarketFactoryHarness(address(usdc), conditionalTokens, fpmmFactory, CREATION_DEPOSIT, TRADING_FEE);
+        MarketFactoryHarness f = new MarketFactoryHarness(address(usdc), conditionalTokens, CREATION_DEPOSIT);
 
         vm.expectRevert(MarketFactory.ZeroAddress.selector);
         f.initialize(address(0), marketResolver);
@@ -132,17 +113,12 @@ contract MarketFactoryTest is Test {
     // ──────────────────────────────────────────────
 
     function _createDefaultMarket(address creator) internal returns (uint256) {
-        uint256 totalCost = CREATION_DEPOSIT + INITIAL_LIQUIDITY;
-        usdc.mint(creator, totalCost);
+        usdc.mint(creator, CREATION_DEPOSIT);
 
         vm.startPrank(creator);
-        usdc.approve(address(factory), totalCost);
+        usdc.approve(address(factory), CREATION_DEPOSIT);
 
-        uint256[] memory odds = new uint256[](2);
-        odds[0] = 50;
-        odds[1] = 50;
-
-        uint256 marketId = factory.createMarket("ipfs://metadata", block.timestamp + 2 hours, IMarketFactory.Category.Sports, INITIAL_LIQUIDITY, odds);
+        uint256 marketId = factory.createMarket("ipfs://metadata", block.timestamp + 2 hours, IMarketFactory.Category.Futbol);
         vm.stopPrank();
 
         return marketId;
@@ -156,13 +132,12 @@ contract MarketFactoryTest is Test {
 
         IMarketFactory.MarketData memory m = factory.getMarket(0);
         assertEq(m.creator, alice);
-        assertEq(m.fpmm, mockFpmm);
         assertEq(m.conditionId, MOCK_CONDITION_ID);
         assertEq(m.metadataURI, "ipfs://metadata");
         assertEq(m.creationDeposit, CREATION_DEPOSIT);
         assertEq(m.resolutionTimestamp, block.timestamp + 2 hours);
         assertEq(uint8(m.status), uint8(IMarketFactory.MarketStatus.Active));
-        assertEq(uint8(m.category), uint8(IMarketFactory.Category.Sports));
+        assertEq(uint8(m.category), uint8(IMarketFactory.Category.Futbol));
     }
 
     function test_createMarket_incrementsMarketCount() public {
@@ -175,75 +150,47 @@ contract MarketFactoryTest is Test {
     }
 
     function test_createMarket_emitsMarketCreated() public {
-        uint256 totalCost = CREATION_DEPOSIT + INITIAL_LIQUIDITY;
-        usdc.mint(alice, totalCost);
+        usdc.mint(alice, CREATION_DEPOSIT);
 
         vm.startPrank(alice);
-        usdc.approve(address(factory), totalCost);
-
-        uint256[] memory odds = new uint256[](2);
-        odds[0] = 50;
-        odds[1] = 50;
+        usdc.approve(address(factory), CREATION_DEPOSIT);
 
         // Check that MarketCreated is emitted (check topic1 = marketId=0 and topic2 = creator=alice)
         vm.expectEmit(true, true, false, false);
         emit IMarketFactory.MarketCreated(
-            0, alice, mockFpmm, MOCK_CONDITION_ID, bytes32(0), "ipfs://metadata", block.timestamp + 2 hours, IMarketFactory.Category.Sports, INITIAL_LIQUIDITY
+            0, alice, MOCK_CONDITION_ID, bytes32(0), "ipfs://metadata", block.timestamp + 2 hours, IMarketFactory.Category.Futbol
         );
 
-        factory.createMarket("ipfs://metadata", block.timestamp + 2 hours, IMarketFactory.Category.Sports, INITIAL_LIQUIDITY, odds);
+        factory.createMarket("ipfs://metadata", block.timestamp + 2 hours, IMarketFactory.Category.Futbol);
         vm.stopPrank();
     }
 
     function test_createMarket_transfersTokensFromCreator() public {
-        uint256 totalCost = CREATION_DEPOSIT + INITIAL_LIQUIDITY;
-        usdc.mint(alice, totalCost);
-
-        vm.startPrank(alice);
-        usdc.approve(address(factory), totalCost);
-
-        uint256[] memory odds = new uint256[](2);
-        odds[0] = 50;
-        odds[1] = 50;
-
-        factory.createMarket("ipfs://metadata", block.timestamp + 2 hours, IMarketFactory.Category.Sports, INITIAL_LIQUIDITY, odds);
-        vm.stopPrank();
-
-        // Alice should have 0 USDC left (deposit + liquidity transferred)
-        assertEq(usdc.balanceOf(alice), 0);
-    }
-
-    function test_createMarket_revertsInvalidTimestamp() public {
-        usdc.mint(alice, CREATION_DEPOSIT + INITIAL_LIQUIDITY);
-        vm.startPrank(alice);
-        usdc.approve(address(factory), CREATION_DEPOSIT + INITIAL_LIQUIDITY);
-
-        uint256[] memory odds = new uint256[](2);
-        odds[0] = 50;
-        odds[1] = 50;
-
-        // Timestamp in the past
-        vm.expectRevert(MarketFactory.InvalidResolutionTimestamp.selector);
-        factory.createMarket("ipfs://metadata", block.timestamp, IMarketFactory.Category.Sports, INITIAL_LIQUIDITY, odds);
-
-        // Timestamp exactly 1 hour from now (needs to be MORE than 1 hour)
-        vm.expectRevert(MarketFactory.InvalidResolutionTimestamp.selector);
-        factory.createMarket("ipfs://metadata", block.timestamp + 1 hours, IMarketFactory.Category.Sports, INITIAL_LIQUIDITY, odds);
-
-        vm.stopPrank();
-    }
-
-    function test_createMarket_revertsZeroLiquidity() public {
         usdc.mint(alice, CREATION_DEPOSIT);
+
         vm.startPrank(alice);
         usdc.approve(address(factory), CREATION_DEPOSIT);
 
-        uint256[] memory odds = new uint256[](2);
-        odds[0] = 50;
-        odds[1] = 50;
+        factory.createMarket("ipfs://metadata", block.timestamp + 2 hours, IMarketFactory.Category.Futbol);
+        vm.stopPrank();
 
-        vm.expectRevert(MarketFactory.InsufficientInitialLiquidity.selector);
-        factory.createMarket("ipfs://metadata", block.timestamp + 2 hours, IMarketFactory.Category.Sports, 0, odds);
+        // Alice should have 0 USDC left (deposit transferred)
+        assertEq(usdc.balanceOf(alice), 0);
+        assertEq(usdc.balanceOf(address(factory)), CREATION_DEPOSIT);
+    }
+
+    function test_createMarket_revertsInvalidTimestamp() public {
+        usdc.mint(alice, CREATION_DEPOSIT * 2);
+        vm.startPrank(alice);
+        usdc.approve(address(factory), CREATION_DEPOSIT * 2);
+
+        // Timestamp in the past
+        vm.expectRevert(MarketFactory.InvalidResolutionTimestamp.selector);
+        factory.createMarket("ipfs://metadata", block.timestamp, IMarketFactory.Category.Futbol);
+
+        // Timestamp exactly 1 hour from now (needs to be MORE than 1 hour)
+        vm.expectRevert(MarketFactory.InvalidResolutionTimestamp.selector);
+        factory.createMarket("ipfs://metadata", block.timestamp + 1 hours, IMarketFactory.Category.Futbol);
 
         vm.stopPrank();
     }
@@ -251,16 +198,12 @@ contract MarketFactoryTest is Test {
     function test_createMarket_revertsWhenPaused() public {
         factory.pauseMarketCreation();
 
-        usdc.mint(alice, CREATION_DEPOSIT + INITIAL_LIQUIDITY);
+        usdc.mint(alice, CREATION_DEPOSIT);
         vm.startPrank(alice);
-        usdc.approve(address(factory), CREATION_DEPOSIT + INITIAL_LIQUIDITY);
-
-        uint256[] memory odds = new uint256[](2);
-        odds[0] = 50;
-        odds[1] = 50;
+        usdc.approve(address(factory), CREATION_DEPOSIT);
 
         vm.expectRevert(Pausable.EnforcedPause.selector);
-        factory.createMarket("ipfs://metadata", block.timestamp + 2 hours, IMarketFactory.Category.Sports, INITIAL_LIQUIDITY, odds);
+        factory.createMarket("ipfs://metadata", block.timestamp + 2 hours, IMarketFactory.Category.Futbol);
 
         vm.stopPrank();
     }
@@ -286,16 +229,12 @@ contract MarketFactoryTest is Test {
     function test_pause_blocksCreateMarket() public {
         factory.pauseMarketCreation();
 
-        usdc.mint(alice, CREATION_DEPOSIT + INITIAL_LIQUIDITY);
+        usdc.mint(alice, CREATION_DEPOSIT);
         vm.startPrank(alice);
-        usdc.approve(address(factory), CREATION_DEPOSIT + INITIAL_LIQUIDITY);
-
-        uint256[] memory odds = new uint256[](2);
-        odds[0] = 50;
-        odds[1] = 50;
+        usdc.approve(address(factory), CREATION_DEPOSIT);
 
         vm.expectRevert(Pausable.EnforcedPause.selector);
-        factory.createMarket("ipfs://metadata", block.timestamp + 2 hours, IMarketFactory.Category.Sports, INITIAL_LIQUIDITY, odds);
+        factory.createMarket("ipfs://metadata", block.timestamp + 2 hours, IMarketFactory.Category.Futbol);
         vm.stopPrank();
     }
 
@@ -358,50 +297,15 @@ contract MarketFactoryTest is Test {
     function test_updateCreationDeposit_affectsNewMarkets() public {
         factory.updateCreationDeposit(5e6);
 
-        uint256 totalCost = 5e6 + INITIAL_LIQUIDITY;
-        usdc.mint(alice, totalCost);
+        usdc.mint(alice, 5e6);
 
         vm.startPrank(alice);
-        usdc.approve(address(factory), totalCost);
+        usdc.approve(address(factory), 5e6);
 
-        uint256[] memory odds = new uint256[](2);
-        odds[0] = 50;
-        odds[1] = 50;
-
-        uint256 marketId = factory.createMarket("ipfs://metadata", block.timestamp + 2 hours, IMarketFactory.Category.Sports, INITIAL_LIQUIDITY, odds);
+        uint256 marketId = factory.createMarket("ipfs://metadata", block.timestamp + 2 hours, IMarketFactory.Category.Futbol);
         vm.stopPrank();
 
         assertEq(factory.getMarket(marketId).creationDeposit, 5e6);
-    }
-
-    // ──────────────────────────────────────────────
-    // updateTradingFee
-    // ──────────────────────────────────────────────
-
-    function test_updateTradingFee_onlyOwner() public {
-        vm.prank(alice);
-        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, alice));
-        factory.updateTradingFee(200);
-    }
-
-    function test_updateTradingFee_updatesValue() public {
-        factory.updateTradingFee(200);
-        assertEq(factory.tradingFee(), 200);
-    }
-
-    function test_updateTradingFee_canSetToZero() public {
-        factory.updateTradingFee(0);
-        assertEq(factory.tradingFee(), 0);
-    }
-
-    function test_updateTradingFee_allowsMaxFee() public {
-        factory.updateTradingFee(1000); // 10% — the max
-        assertEq(factory.tradingFee(), 1000);
-    }
-
-    function test_updateTradingFee_revertsAboveMax() public {
-        vm.expectRevert(abi.encodeWithSelector(MarketFactory.InvalidTradingFee.selector, 1001, 1000));
-        factory.updateTradingFee(1001);
     }
 
     // ──────────────────────────────────────────────
@@ -413,7 +317,6 @@ contract MarketFactoryTest is Test {
 
         IMarketFactory.MarketData memory m = factory.getMarket(0);
         assertEq(m.creator, alice);
-        assertEq(m.fpmm, mockFpmm);
         assertEq(m.conditionId, MOCK_CONDITION_ID);
         assertEq(m.metadataURI, "ipfs://metadata");
         assertEq(m.creationDeposit, CREATION_DEPOSIT);
@@ -423,7 +326,6 @@ contract MarketFactoryTest is Test {
     function test_getMarket_returnsEmptyForNonexistent() public view {
         IMarketFactory.MarketData memory m = factory.getMarket(999);
         assertEq(m.creator, address(0));
-        assertEq(m.fpmm, address(0));
         assertEq(m.creationDeposit, 0);
     }
 
@@ -435,8 +337,6 @@ contract MarketFactoryTest is Test {
         _createDefaultMarket(alice);
         factory.setMarketStatus(0, IMarketFactory.MarketStatus.Resolved);
 
-        // Fund the factory with USDC to cover the refund
-        // (in createMarket the deposit stays in the factory)
         uint256 aliceBalanceBefore = usdc.balanceOf(alice);
 
         vm.prank(alice);
@@ -593,7 +493,7 @@ contract MarketFactoryTest is Test {
     function test_questionId_differsAcrossFactoryInstances() public {
         // Deploy a second factory with identical constructor args
         MarketFactoryHarness factory2 = new MarketFactoryHarness(
-            address(usdc), conditionalTokens, fpmmFactory, CREATION_DEPOSIT, TRADING_FEE
+            address(usdc), conditionalTokens, CREATION_DEPOSIT
         );
         factory2.initialize(oracleAdapter, marketResolver);
 
@@ -604,26 +504,15 @@ contract MarketFactoryTest is Test {
             abi.encodeWithSelector(IConditionalTokens.getConditionId.selector),
             abi.encode(MOCK_CONDITION_ID)
         );
-        vm.mockCall(
-            fpmmFactory,
-            abi.encodeWithSelector(IFPMMDeterministicFactory.create2FixedProductMarketMaker.selector),
-            abi.encode(mockFpmm)
-        );
 
         // Create identical markets on both factories from the same sender at the same timestamp
-        uint256 totalCost = CREATION_DEPOSIT + INITIAL_LIQUIDITY;
-
-        usdc.mint(alice, totalCost * 2);
+        usdc.mint(alice, CREATION_DEPOSIT * 2);
         vm.startPrank(alice);
-        usdc.approve(address(factory), totalCost);
-        usdc.approve(address(factory2), totalCost);
+        usdc.approve(address(factory), CREATION_DEPOSIT);
+        usdc.approve(address(factory2), CREATION_DEPOSIT);
 
-        uint256[] memory odds = new uint256[](2);
-        odds[0] = 50;
-        odds[1] = 50;
-
-        uint256 id1 = factory.createMarket("ipfs://metadata", block.timestamp + 2 hours, IMarketFactory.Category.Sports, INITIAL_LIQUIDITY, odds);
-        uint256 id2 = factory2.createMarket("ipfs://metadata", block.timestamp + 2 hours, IMarketFactory.Category.Sports, INITIAL_LIQUIDITY, odds);
+        uint256 id1 = factory.createMarket("ipfs://metadata", block.timestamp + 2 hours, IMarketFactory.Category.Futbol);
+        uint256 id2 = factory2.createMarket("ipfs://metadata", block.timestamp + 2 hours, IMarketFactory.Category.Futbol);
         vm.stopPrank();
 
         // questionIds MUST differ because address(this) differs between factories
@@ -637,17 +526,12 @@ contract MarketFactoryTest is Test {
 
     function test_questionId_includesChainId() public {
         // Verify the questionId incorporates block.chainid by computing it manually
-        uint256 totalCost = CREATION_DEPOSIT + INITIAL_LIQUIDITY;
-        usdc.mint(alice, totalCost);
+        usdc.mint(alice, CREATION_DEPOSIT);
 
         vm.startPrank(alice);
-        usdc.approve(address(factory), totalCost);
+        usdc.approve(address(factory), CREATION_DEPOSIT);
 
-        uint256[] memory odds = new uint256[](2);
-        odds[0] = 50;
-        odds[1] = 50;
-
-        uint256 marketId = factory.createMarket("ipfs://metadata", block.timestamp + 2 hours, IMarketFactory.Category.Sports, INITIAL_LIQUIDITY, odds);
+        uint256 marketId = factory.createMarket("ipfs://metadata", block.timestamp + 2 hours, IMarketFactory.Category.Futbol);
         vm.stopPrank();
 
         bytes32 expectedQuestionId = keccak256(abi.encodePacked(block.chainid, address(factory), uint256(0), alice, block.timestamp));

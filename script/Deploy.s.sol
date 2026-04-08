@@ -5,12 +5,13 @@ import { Script, console } from "forge-std/Script.sol";
 import { MarketFactory } from "../src/MarketFactory.sol";
 import { ClovOracleAdapter } from "../src/ClovOracleAdapter.sol";
 import { MarketResolver } from "../src/MarketResolver.sol";
-import { Vault } from "../src/Vault.sol";
 
 /// @title Deploy — Clov Protocol full deployment to Polygon Amoy
-/// @notice Deploys Gnosis ConditionalTokens + FPMMDeterministicFactory (not available on Amoy),
+/// @notice Deploys Gnosis ConditionalTokens (not available on Amoy),
 ///         then deploys MarketFactory, ClovOracleAdapter, MarketResolver, and wires them together.
 /// @dev Usage: forge script script/Deploy.s.sol --rpc-url amoy --broadcast
+///      Clov 2.0: FPMM removed. Trading is handled by the CTF Exchange CLOB
+///      (deployed separately in Phase C).
 contract Deploy is Script {
     // ── External addresses on Amoy (confirmed) ──
     address constant USDC = 0x41E94Eb019C0762f9Bfcf9Fb1E58725BfB0e7582;
@@ -18,7 +19,6 @@ contract Deploy is Script {
 
     // ── Configuration ──
     uint256 constant CREATION_DEPOSIT = 5e6; // 5 USDC (6 decimals)
-    uint256 constant TRADING_FEE = 200; // 2% in basis points
     uint256 constant BOND_AMOUNT = 1e6; // 1 USDC bond for UMA assertions
     uint64 constant ASSERTION_LIVENESS = 7200; // 2 hours dispute window
 
@@ -57,23 +57,15 @@ contract Deploy is Script {
         );
         console.log("ConditionalTokens:", conditionalTokens);
 
-        // ── Step 2: Deploy Gnosis FPMMDeterministicFactory ──
-        address fpmmFactory = _deployFromArtifact(
-            "conditional-tokens-market-makers/contracts/FPMMDeterministicFactory.sol:FPMMDeterministicFactory"
-        );
-        console.log("FPMMDeterministicFactory:", fpmmFactory);
-
-        // ── Step 3: Deploy MarketFactory (without cross-references) ──
+        // ── Step 2: Deploy MarketFactory (without cross-references) ──
         MarketFactory marketFactory = new MarketFactory(
             USDC,
             conditionalTokens,
-            fpmmFactory,
-            CREATION_DEPOSIT,
-            TRADING_FEE
+            CREATION_DEPOSIT
         );
         console.log("MarketFactory:", address(marketFactory));
 
-        // ── Step 4: Deploy ClovOracleAdapter (without cross-references) ──
+        // ── Step 3: Deploy ClovOracleAdapter (without cross-references) ──
         ClovOracleAdapter oracleAdapter = new ClovOracleAdapter(
             UMA_ORACLE_V3,
             USDC, // bond token = USDC
@@ -82,15 +74,11 @@ contract Deploy is Script {
         );
         console.log("ClovOracleAdapter:", address(oracleAdapter));
 
-        // ── Step 5: Deploy MarketResolver (without cross-references) ──
+        // ── Step 4: Deploy MarketResolver (without cross-references) ──
         MarketResolver marketResolver = new MarketResolver(conditionalTokens);
         console.log("MarketResolver:", address(marketResolver));
 
-        // ── Step 6: Deploy Vault ──
-        Vault vault = new Vault(USDC, conditionalTokens);
-        console.log("Vault:", address(vault));
-
-        // ── Step 7: Wire cross-references via initialize() ──
+        // ── Step 5: Wire cross-references via initialize() ──
         marketFactory.initialize(address(oracleAdapter), address(marketResolver));
         console.log("MarketFactory initialized");
 
@@ -106,11 +94,9 @@ contract Deploy is Script {
         console.log("");
         console.log("=== Deployment Summary ===");
         console.log("ConditionalTokens:         ", conditionalTokens);
-        console.log("FPMMDeterministicFactory:   ", fpmmFactory);
         console.log("MarketFactory:              ", address(marketFactory));
         console.log("ClovOracleAdapter:          ", address(oracleAdapter));
         console.log("MarketResolver:             ", address(marketResolver));
-        console.log("Vault:                      ", address(vault));
         console.log("USDC (collateral + bond):   ", USDC);
         console.log("UMA OptimisticOracleV3:     ", UMA_ORACLE_V3);
         console.log("=== All contracts deployed and wired ===");
