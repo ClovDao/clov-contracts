@@ -5,6 +5,7 @@ import { Script, console } from "forge-std/Script.sol";
 import { MarketFactory } from "../src/MarketFactory.sol";
 import { ClovOracleAdapter } from "../src/ClovOracleAdapter.sol";
 import { MarketResolver } from "../src/MarketResolver.sol";
+import { Vault } from "../src/Vault.sol";
 
 /// @title Deploy — Clov Protocol full deployment to Polygon Amoy
 /// @notice Deploys Gnosis ConditionalTokens + FPMMDeterministicFactory (not available on Amoy),
@@ -85,7 +86,11 @@ contract Deploy is Script {
         MarketResolver marketResolver = new MarketResolver(conditionalTokens);
         console.log("MarketResolver:", address(marketResolver));
 
-        // ── Step 6: Wire cross-references via initialize() ──
+        // ── Step 6: Deploy Vault ──
+        Vault vault = new Vault(USDC, conditionalTokens);
+        console.log("Vault:", address(vault));
+
+        // ── Step 7: Wire cross-references via initialize() ──
         marketFactory.initialize(address(oracleAdapter), address(marketResolver));
         console.log("MarketFactory initialized");
 
@@ -105,6 +110,7 @@ contract Deploy is Script {
         console.log("MarketFactory:              ", address(marketFactory));
         console.log("ClovOracleAdapter:          ", address(oracleAdapter));
         console.log("MarketResolver:             ", address(marketResolver));
+        console.log("Vault:                      ", address(vault));
         console.log("USDC (collateral + bond):   ", USDC);
         console.log("UMA OptimisticOracleV3:     ", UMA_ORACLE_V3);
         console.log("=== All contracts deployed and wired ===");
