@@ -5,7 +5,6 @@ import { Test } from "forge-std/Test.sol";
 import { MarketFactory } from "../src/MarketFactory.sol";
 import { IMarketFactory } from "../src/interfaces/IMarketFactory.sol";
 import { IConditionalTokens } from "../src/interfaces/IConditionalTokens.sol";
-import { IFPMMDeterministicFactory } from "../src/interfaces/IFPMMDeterministicFactory.sol";
 import { ERC20 } from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
 
@@ -21,12 +20,10 @@ contract MarketFactoryHarness is MarketFactory {
     constructor(
         address _collateralToken,
         address _conditionalTokens,
-        address _fpmmFactory,
-        uint256 _creationDeposit,
-        uint256 _tradingFee
+        uint256 _creationDeposit
     )
         MarketFactory(
-            _collateralToken, _conditionalTokens, _fpmmFactory, _creationDeposit, _tradingFee
+            _collateralToken, _conditionalTokens, _creationDeposit
         )
     {}
 
@@ -40,20 +37,17 @@ contract MarketFactoryFuzzTest is Test {
     MockERC20 public usdc;
 
     address public conditionalTokens = makeAddr("conditionalTokens");
-    address public fpmmFactory = makeAddr("fpmmFactory");
     address public oracleAdapter = makeAddr("oracleAdapter");
     address public marketResolver = makeAddr("marketResolver");
-    address public mockFpmm = makeAddr("mockFpmm");
 
     uint256 public constant CREATION_DEPOSIT = 10e6;
-    uint256 public constant TRADING_FEE = 100;
 
     bytes32 public constant MOCK_CONDITION_ID = keccak256("mockConditionId");
 
     function setUp() public {
         usdc = new MockERC20();
         factory = new MarketFactoryHarness(
-            address(usdc), conditionalTokens, fpmmFactory, CREATION_DEPOSIT, TRADING_FEE
+            address(usdc), conditionalTokens, CREATION_DEPOSIT
         );
         factory.initialize(oracleAdapter, marketResolver);
 
@@ -61,34 +55,23 @@ contract MarketFactoryFuzzTest is Test {
         vm.mockCall(
             conditionalTokens, abi.encodeWithSelector(IConditionalTokens.getConditionId.selector), abi.encode(MOCK_CONDITION_ID)
         );
-        vm.mockCall(
-            fpmmFactory,
-            abi.encodeWithSelector(IFPMMDeterministicFactory.create2FixedProductMarketMaker.selector),
-            abi.encode(mockFpmm)
-        );
     }
 
     // ──────────────────────────────────────────────
     // createMarket fuzz
     // ──────────────────────────────────────────────
 
-    function testFuzz_createMarket_alwaysIncrementsCount(uint256 initialLiquidity, uint256 hoursAhead) public {
-        initialLiquidity = bound(initialLiquidity, 1, 1_000_000e6); // 1 wei to 1M USDC
+    function testFuzz_createMarket_alwaysIncrementsCount(uint256 hoursAhead) public {
         hoursAhead = bound(hoursAhead, 2, 365 * 24); // 2 hours to 1 year
 
         address creator = makeAddr("fuzzCreator");
-        uint256 totalCost = CREATION_DEPOSIT + initialLiquidity;
-        usdc.mint(creator, totalCost);
+        usdc.mint(creator, CREATION_DEPOSIT);
 
         vm.startPrank(creator);
-        usdc.approve(address(factory), totalCost);
-
-        uint256[] memory odds = new uint256[](2);
-        odds[0] = 50;
-        odds[1] = 50;
+        usdc.approve(address(factory), CREATION_DEPOSIT);
 
         uint256 countBefore = factory.marketCount();
-        factory.createMarket("ipfs://fuzz", block.timestamp + hoursAhead * 1 hours, IMarketFactory.Category.Sports, initialLiquidity, odds);
+        factory.createMarket("ipfs://fuzz", block.timestamp + hoursAhead * 1 hours, IMarketFactory.Category.Futbol);
         vm.stopPrank();
 
         assertEq(factory.marketCount(), countBefore + 1);
@@ -98,18 +81,13 @@ contract MarketFactoryFuzzTest is Test {
         vm.assume(creator != address(0));
         vm.assume(creator.code.length == 0); // EOA only (no contracts that might reject transfers)
 
-        uint256 totalCost = CREATION_DEPOSIT + 100e6;
-        usdc.mint(creator, totalCost);
+        usdc.mint(creator, CREATION_DEPOSIT);
 
         vm.startPrank(creator);
-        usdc.approve(address(factory), totalCost);
-
-        uint256[] memory odds = new uint256[](2);
-        odds[0] = 50;
-        odds[1] = 50;
+        usdc.approve(address(factory), CREATION_DEPOSIT);
 
         uint256 marketId =
-            factory.createMarket("ipfs://fuzz", block.timestamp + 2 hours, IMarketFactory.Category.Sports, 100e6, odds);
+            factory.createMarket("ipfs://fuzz", block.timestamp + 2 hours, IMarketFactory.Category.Futbol);
         vm.stopPrank();
 
         assertEq(factory.getMarket(marketId).creator, creator);
@@ -122,19 +100,13 @@ contract MarketFactoryFuzzTest is Test {
         factory.updateCreationDeposit(deposit);
 
         address creator = makeAddr("fuzzCreator");
-        uint256 liquidity = 100e6;
-        uint256 totalCost = deposit + liquidity;
-        usdc.mint(creator, totalCost);
+        usdc.mint(creator, deposit);
 
         vm.startPrank(creator);
-        usdc.approve(address(factory), totalCost);
-
-        uint256[] memory odds = new uint256[](2);
-        odds[0] = 50;
-        odds[1] = 50;
+        usdc.approve(address(factory), deposit);
 
         uint256 marketId =
-            factory.createMarket("ipfs://fuzz", block.timestamp + 2 hours, IMarketFactory.Category.Sports, liquidity, odds);
+            factory.createMarket("ipfs://fuzz", block.timestamp + 2 hours, IMarketFactory.Category.Futbol);
         vm.stopPrank();
 
         assertEq(factory.getMarket(marketId).creationDeposit, deposit);
@@ -145,45 +117,14 @@ contract MarketFactoryFuzzTest is Test {
         timestamp = bound(timestamp, 0, block.timestamp + 1 hours);
 
         address creator = makeAddr("fuzzCreator");
-        uint256 totalCost = CREATION_DEPOSIT + 100e6;
-        usdc.mint(creator, totalCost);
+        usdc.mint(creator, CREATION_DEPOSIT);
 
         vm.startPrank(creator);
-        usdc.approve(address(factory), totalCost);
-
-        uint256[] memory odds = new uint256[](2);
-        odds[0] = 50;
-        odds[1] = 50;
+        usdc.approve(address(factory), CREATION_DEPOSIT);
 
         vm.expectRevert(MarketFactory.InvalidResolutionTimestamp.selector);
-        factory.createMarket("ipfs://fuzz", timestamp, IMarketFactory.Category.Sports, 100e6, odds);
+        factory.createMarket("ipfs://fuzz", timestamp, IMarketFactory.Category.Futbol);
         vm.stopPrank();
-    }
-
-    // ──────────────────────────────────────────────
-    // updateTradingFee fuzz
-    // ──────────────────────────────────────────────
-
-    function testFuzz_updateTradingFee_acceptsValidFees(uint256 fee) public {
-        fee = bound(fee, 0, factory.MAX_TRADING_FEE());
-
-        factory.updateTradingFee(fee);
-        assertEq(factory.tradingFee(), fee);
-    }
-
-    function testFuzz_updateTradingFee_revertsAboveMax(uint256 fee) public {
-        fee = bound(fee, factory.MAX_TRADING_FEE() + 1, type(uint256).max);
-
-        vm.expectRevert(abi.encodeWithSelector(MarketFactory.InvalidTradingFee.selector, fee, factory.MAX_TRADING_FEE()));
-        factory.updateTradingFee(fee);
-    }
-
-    function testFuzz_updateTradingFee_onlyOwner(address caller) public {
-        vm.assume(caller != address(this)); // not the owner
-
-        vm.prank(caller);
-        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, caller));
-        factory.updateTradingFee(200);
     }
 
     // ──────────────────────────────────────────────
@@ -221,19 +162,13 @@ contract MarketFactoryFuzzTest is Test {
         factory.updateCreationDeposit(deposit);
 
         address creator = makeAddr("fuzzCreator");
-        uint256 liquidity = 100e6;
-        uint256 totalCost = deposit + liquidity;
-        usdc.mint(creator, totalCost);
+        usdc.mint(creator, deposit);
 
         vm.startPrank(creator);
-        usdc.approve(address(factory), totalCost);
-
-        uint256[] memory odds = new uint256[](2);
-        odds[0] = 50;
-        odds[1] = 50;
+        usdc.approve(address(factory), deposit);
 
         uint256 marketId =
-            factory.createMarket("ipfs://fuzz", block.timestamp + 2 hours, IMarketFactory.Category.Sports, liquidity, odds);
+            factory.createMarket("ipfs://fuzz", block.timestamp + 2 hours, IMarketFactory.Category.Futbol);
         vm.stopPrank();
 
         factory.setMarketStatus(marketId, IMarketFactory.MarketStatus.Resolved);
@@ -251,18 +186,13 @@ contract MarketFactoryFuzzTest is Test {
         address creator = makeAddr("realCreator");
         vm.assume(caller != creator);
 
-        uint256 totalCost = CREATION_DEPOSIT + 100e6;
-        usdc.mint(creator, totalCost);
+        usdc.mint(creator, CREATION_DEPOSIT);
 
         vm.startPrank(creator);
-        usdc.approve(address(factory), totalCost);
-
-        uint256[] memory odds = new uint256[](2);
-        odds[0] = 50;
-        odds[1] = 50;
+        usdc.approve(address(factory), CREATION_DEPOSIT);
 
         uint256 marketId =
-            factory.createMarket("ipfs://fuzz", block.timestamp + 2 hours, IMarketFactory.Category.Sports, 100e6, odds);
+            factory.createMarket("ipfs://fuzz", block.timestamp + 2 hours, IMarketFactory.Category.Futbol);
         vm.stopPrank();
 
         factory.setMarketStatus(marketId, IMarketFactory.MarketStatus.Resolved);
@@ -279,18 +209,13 @@ contract MarketFactoryFuzzTest is Test {
         vm.assume(statusRaw != uint8(IMarketFactory.MarketStatus.Cancelled));
 
         address creator = makeAddr("fuzzCreator");
-        uint256 totalCost = CREATION_DEPOSIT + 100e6;
-        usdc.mint(creator, totalCost);
+        usdc.mint(creator, CREATION_DEPOSIT);
 
         vm.startPrank(creator);
-        usdc.approve(address(factory), totalCost);
-
-        uint256[] memory odds = new uint256[](2);
-        odds[0] = 50;
-        odds[1] = 50;
+        usdc.approve(address(factory), CREATION_DEPOSIT);
 
         uint256 marketId =
-            factory.createMarket("ipfs://fuzz", block.timestamp + 2 hours, IMarketFactory.Category.Sports, 100e6, odds);
+            factory.createMarket("ipfs://fuzz", block.timestamp + 2 hours, IMarketFactory.Category.Futbol);
         vm.stopPrank();
 
         factory.setMarketStatus(marketId, IMarketFactory.MarketStatus(statusRaw));
@@ -335,18 +260,13 @@ contract MarketFactoryFuzzTest is Test {
 
         // Create a market and force it into the `from` state via harness
         address creator = makeAddr("fuzzCreator");
-        uint256 totalCost = CREATION_DEPOSIT + 100e6;
-        usdc.mint(creator, totalCost);
+        usdc.mint(creator, CREATION_DEPOSIT);
 
         vm.startPrank(creator);
-        usdc.approve(address(factory), totalCost);
-
-        uint256[] memory odds = new uint256[](2);
-        odds[0] = 50;
-        odds[1] = 50;
+        usdc.approve(address(factory), CREATION_DEPOSIT);
 
         uint256 marketId =
-            factory.createMarket("ipfs://fuzz", block.timestamp + 2 hours, IMarketFactory.Category.Sports, 100e6, odds);
+            factory.createMarket("ipfs://fuzz", block.timestamp + 2 hours, IMarketFactory.Category.Futbol);
         vm.stopPrank();
 
         // Force market into the `from` status
@@ -366,7 +286,7 @@ contract MarketFactoryFuzzTest is Test {
         }
     }
 
-    /// @notice Explicitly test all 5 valid transitions succeed
+    /// @notice Explicitly test all valid transitions succeed
     function test_stateTransition_validTransitions() public {
         _testValidTransition(IMarketFactory.MarketStatus.Created, IMarketFactory.MarketStatus.Active);
         _testValidTransition(IMarketFactory.MarketStatus.Active, IMarketFactory.MarketStatus.Resolving);
@@ -378,18 +298,13 @@ contract MarketFactoryFuzzTest is Test {
 
     function _testValidTransition(IMarketFactory.MarketStatus from, IMarketFactory.MarketStatus to) internal {
         address creator = makeAddr("transitionCreator");
-        uint256 totalCost = CREATION_DEPOSIT + 100e6;
-        usdc.mint(creator, totalCost);
+        usdc.mint(creator, CREATION_DEPOSIT);
 
         vm.startPrank(creator);
-        usdc.approve(address(factory), totalCost);
-
-        uint256[] memory odds = new uint256[](2);
-        odds[0] = 50;
-        odds[1] = 50;
+        usdc.approve(address(factory), CREATION_DEPOSIT);
 
         uint256 marketId =
-            factory.createMarket("ipfs://transition", block.timestamp + 2 hours, IMarketFactory.Category.Sports, 100e6, odds);
+            factory.createMarket("ipfs://transition", block.timestamp + 2 hours, IMarketFactory.Category.Futbol);
         vm.stopPrank();
 
         factory.setMarketStatus(marketId, from);
@@ -406,18 +321,13 @@ contract MarketFactoryFuzzTest is Test {
         IMarketFactory.MarketStatus to = IMarketFactory.MarketStatus(toRaw);
 
         address creator = makeAddr("terminalCreator");
-        uint256 totalCost = CREATION_DEPOSIT + 100e6;
-        usdc.mint(creator, totalCost);
+        usdc.mint(creator, CREATION_DEPOSIT);
 
         vm.startPrank(creator);
-        usdc.approve(address(factory), totalCost);
-
-        uint256[] memory odds = new uint256[](2);
-        odds[0] = 50;
-        odds[1] = 50;
+        usdc.approve(address(factory), CREATION_DEPOSIT);
 
         uint256 marketId =
-            factory.createMarket("ipfs://terminal", block.timestamp + 2 hours, IMarketFactory.Category.Sports, 100e6, odds);
+            factory.createMarket("ipfs://terminal", block.timestamp + 2 hours, IMarketFactory.Category.Futbol);
         vm.stopPrank();
 
         factory.setMarketStatus(marketId, IMarketFactory.MarketStatus.Resolved);
@@ -439,18 +349,13 @@ contract MarketFactoryFuzzTest is Test {
         IMarketFactory.MarketStatus to = IMarketFactory.MarketStatus(toRaw);
 
         address creator = makeAddr("terminalCreator");
-        uint256 totalCost = CREATION_DEPOSIT + 100e6;
-        usdc.mint(creator, totalCost);
+        usdc.mint(creator, CREATION_DEPOSIT);
 
         vm.startPrank(creator);
-        usdc.approve(address(factory), totalCost);
-
-        uint256[] memory odds = new uint256[](2);
-        odds[0] = 50;
-        odds[1] = 50;
+        usdc.approve(address(factory), CREATION_DEPOSIT);
 
         uint256 marketId =
-            factory.createMarket("ipfs://terminal", block.timestamp + 2 hours, IMarketFactory.Category.Sports, 100e6, odds);
+            factory.createMarket("ipfs://terminal", block.timestamp + 2 hours, IMarketFactory.Category.Futbol);
         vm.stopPrank();
 
         factory.setMarketStatus(marketId, IMarketFactory.MarketStatus.Cancelled);

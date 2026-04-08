@@ -9,7 +9,6 @@ import { IMarketFactory } from "../src/interfaces/IMarketFactory.sol";
 import { IClovOracleAdapter } from "../src/interfaces/IClovOracleAdapter.sol";
 import { IMarketResolver } from "../src/interfaces/IMarketResolver.sol";
 import { IConditionalTokens } from "../src/interfaces/IConditionalTokens.sol";
-import { IFPMMDeterministicFactory } from "../src/interfaces/IFPMMDeterministicFactory.sol";
 import { IOptimisticOracleV3 } from "../src/interfaces/IOptimisticOracleV3.sol";
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { ERC20 } from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
@@ -27,11 +26,14 @@ contract MockUSDC is ERC20 {
     }
 }
 
-/// @title IntegrationTest — Full lifecycle of a Clov prediction market
-/// @notice Tests the complete flow: create market → trade → assert → UMA callback → resolve → redeem
+/// @title IntegrationTest — Core lifecycle of a Clov prediction market
+/// @notice Tests the core flow: create market → assert → UMA callback → resolve
 /// @dev Uses REAL Clov contracts (MarketFactory, ClovOracleAdapter, MarketResolver) with mocked
-///      external dependencies (Gnosis ConditionalTokens, FPMM, UMA Oracle) since Gnosis contracts
+///      external dependencies (Gnosis ConditionalTokens, UMA Oracle) since Gnosis contracts
 ///      are Solidity 0.5.x and cannot be co-compiled with 0.8.24.
+///
+///      NOTE: Trading logic (FPMM) has been removed in Clov 2.0 (CLOB pivot). Trading is now
+///      handled externally by the CTF Exchange CLOB and is not tested in this integration test.
 contract IntegrationTest is Test {
     // ──────────────────────────────────────────────
     // Contracts
@@ -47,9 +49,7 @@ contract IntegrationTest is Test {
     // ──────────────────────────────────────────────
 
     address public conditionalTokens = makeAddr("conditionalTokens");
-    address public fpmmFactory = makeAddr("fpmmFactory");
     address public umaOracle = makeAddr("umaOracle");
-    address public mockFpmm = makeAddr("mockFpmm");
 
     // ──────────────────────────────────────────────
     // Actors
@@ -57,8 +57,7 @@ contract IntegrationTest is Test {
 
     address public deployer;
     address public creator = makeAddr("creator");
-    address public user1 = makeAddr("user1"); // YES buyer
-    address public user2 = makeAddr("user2"); // NO buyer
+    address public user1 = makeAddr("user1");
     address public asserter = makeAddr("asserter");
 
     // ──────────────────────────────────────────────
@@ -66,8 +65,6 @@ contract IntegrationTest is Test {
     // ──────────────────────────────────────────────
 
     uint256 public constant CREATION_DEPOSIT = 10e6; // 10 USDC
-    uint256 public constant TRADING_FEE = 100; // 1% BPS
-    uint256 public constant INITIAL_LIQUIDITY = 1000e6; // 1000 USDC
     uint256 public constant BOND_AMOUNT = 500e6; // 500 USDC
     uint64 public constant ASSERTION_LIVENESS = 7200; // 2 hours
     bytes32 public constant DEFAULT_IDENTIFIER = keccak256("ASSERT_TRUTH");
@@ -99,13 +96,6 @@ contract IntegrationTest is Test {
             abi.encode()
         );
 
-        // ── Mock FPMM Factory ──
-        vm.mockCall(
-            fpmmFactory,
-            abi.encodeWithSelector(IFPMMDeterministicFactory.create2FixedProductMarketMaker.selector),
-            abi.encode(mockFpmm)
-        );
-
         // ── Mock UMA Oracle ──
         vm.mockCall(
             umaOracle,
@@ -122,9 +112,7 @@ contract IntegrationTest is Test {
         factory = new MarketFactory(
             address(usdc),
             conditionalTokens,
-            fpmmFactory,
-            CREATION_DEPOSIT,
-            TRADING_FEE
+            CREATION_DEPOSIT
         );
 
         oracleAdapter = new ClovOracleAdapter(
@@ -143,15 +131,15 @@ contract IntegrationTest is Test {
     }
 
     // ──────────────────────────────────────────────
-    // Full Lifecycle Test
+    // Full Lifecycle Test (create → assert → resolve)
     // ──────────────────────────────────────────────
 
-    function test_fullLifecycle_createTradeAssertResolveRedeem() public {
+    function test_fullLifecycle_createAssertResolve() public {
         // PHASE 1: Create Market
         uint256 marketId = _createMarketAsCreator(
             "ipfs://will-team-a-win",
             block.timestamp + 2 hours,
-            IMarketFactory.Category.Sports
+            IMarketFactory.Category.Futbol
         );
 
         assertEq(marketId, 0, "first market should be id 0");
@@ -161,28 +149,20 @@ contract IntegrationTest is Test {
             IMarketFactory.MarketData memory market = factory.getMarket(marketId);
             assertEq(uint8(market.status), uint8(IMarketFactory.MarketStatus.Active), "market should be Active");
             assertEq(market.creator, creator, "creator mismatch");
-            assertEq(market.fpmm, mockFpmm, "fpmm address mismatch");
             assertEq(market.conditionId, MOCK_CONDITION_ID, "conditionId mismatch");
             assertTrue(market.questionId != bytes32(0), "questionId should not be zero");
         }
 
-        // Factory should hold the creation deposit + initial liquidity
-        // (FPMM factory is mocked so it doesn't actually pull the liquidity)
+        // Factory should hold the creation deposit
         assertEq(
             usdc.balanceOf(address(factory)),
-            CREATION_DEPOSIT + INITIAL_LIQUIDITY,
-            "factory should hold deposit + liquidity (mocked FPMM)"
+            CREATION_DEPOSIT,
+            "factory should hold deposit"
         );
         // Creator should have 0 left
-        assertEq(usdc.balanceOf(creator), 0, "creator should have spent everything");
+        assertEq(usdc.balanceOf(creator), 0, "creator should have spent deposit");
 
-        // PHASE 2 & 3: Trade
-        _simulateTrades();
-
-        // PHASE 4: Verify prices changed (via mock)
-        _verifyPricesShifted();
-
-        // PHASE 5: Assert outcome (YES wins)
+        // PHASE 2: Assert outcome (YES wins)
         {
             uint256 resTs = factory.getMarket(marketId).resolutionTimestamp;
             vm.warp(resTs + 1);
@@ -205,11 +185,11 @@ contract IntegrationTest is Test {
         // Verify assertion data stored correctly
         _verifyAssertionData(assertionId, marketId);
 
-        // PHASE 6: UMA confirms truth → resolve
+        // PHASE 3: UMA confirms truth → resolve
         vm.prank(umaOracle);
         oracleAdapter.assertionResolvedCallback(assertionId, true);
 
-        // PHASE 7: Verify market is Resolved
+        // PHASE 4: Verify market is Resolved
         assertEq(
             uint8(factory.getMarket(marketId).status),
             uint8(IMarketFactory.MarketStatus.Resolved),
@@ -223,13 +203,7 @@ contract IntegrationTest is Test {
             assertTrue(assertion.resolved, "assertion should be resolved");
         }
 
-        // PHASE 8: Winner redeems — User1 (YES holder)
-        _redeemAndVerifyWinner(marketId);
-
-        // PHASE 9: Loser gets nothing — User2 (NO holder)
-        _redeemAndVerifyLoser(marketId);
-
-        // PHASE 10: Creator reclaims deposit
+        // PHASE 5: Creator reclaims deposit
         _refundAndVerifyDeposit(marketId);
     }
 
@@ -242,7 +216,7 @@ contract IntegrationTest is Test {
         uint256 marketId = _createMarketAsCreator(
             "ipfs://disputed-market",
             block.timestamp + 2 hours,
-            IMarketFactory.Category.Gaming
+            IMarketFactory.Category.Esports
         );
 
         IMarketFactory.MarketData memory market = factory.getMarket(marketId);
@@ -338,21 +312,15 @@ contract IntegrationTest is Test {
 
     function test_lifecycle_multipleMarketsIndependent() public {
         // Create two markets
-        uint256 totalCost = CREATION_DEPOSIT + INITIAL_LIQUIDITY;
-
-        usdc.mint(creator, totalCost * 2);
+        usdc.mint(creator, CREATION_DEPOSIT * 2);
         vm.startPrank(creator);
-        usdc.approve(address(factory), totalCost * 2);
-
-        uint256[] memory odds = new uint256[](2);
-        odds[0] = 50;
-        odds[1] = 50;
+        usdc.approve(address(factory), CREATION_DEPOSIT * 2);
 
         uint256 market0 = factory.createMarket(
-            "ipfs://market-0", block.timestamp + 2 hours, IMarketFactory.Category.Sports, INITIAL_LIQUIDITY, odds
+            "ipfs://market-0", block.timestamp + 2 hours, IMarketFactory.Category.Futbol
         );
         uint256 market1 = factory.createMarket(
-            "ipfs://market-1", block.timestamp + 3 hours, IMarketFactory.Category.Gaming, INITIAL_LIQUIDITY, odds
+            "ipfs://market-1", block.timestamp + 3 hours, IMarketFactory.Category.Esports
         );
         vm.stopPrank();
 
@@ -384,106 +352,25 @@ contract IntegrationTest is Test {
     // Helpers
     // ──────────────────────────────────────────────
 
-    /// @dev Returns index sets for binary outcome [0b01, 0b10] = [1, 2]
-    function _indexSets() internal pure returns (uint256[] memory) {
-        uint256[] memory sets = new uint256[](2);
-        sets[0] = 1; // YES = 0b01
-        sets[1] = 2; // NO  = 0b10
-        return sets;
-    }
-
     /// @dev Creates a market as `creator` with standard params
     function _createMarketAsCreator(
         string memory metadataURI,
         uint256 resolutionTimestamp,
         IMarketFactory.Category category
     ) internal returns (uint256) {
-        uint256 totalCreationCost = CREATION_DEPOSIT + INITIAL_LIQUIDITY;
-        usdc.mint(creator, totalCreationCost);
+        usdc.mint(creator, CREATION_DEPOSIT);
 
         vm.startPrank(creator);
-        usdc.approve(address(factory), totalCreationCost);
-
-        uint256[] memory odds = new uint256[](2);
-        odds[0] = 50;
-        odds[1] = 50;
+        usdc.approve(address(factory), CREATION_DEPOSIT);
 
         uint256 marketId = factory.createMarket(
             metadataURI,
             resolutionTimestamp,
-            category,
-            INITIAL_LIQUIDITY,
-            odds
+            category
         );
         vm.stopPrank();
 
         return marketId;
-    }
-
-    /// @dev Simulates user1 buying YES and user2 buying NO via mocked FPMM
-    function _simulateTrades() internal {
-        uint256 user1Investment = 200e6;
-        usdc.mint(user1, user1Investment);
-
-        vm.mockCall(
-            mockFpmm,
-            abi.encodeWithSignature("buy(uint256,uint256,uint256)", user1Investment, 0, 0),
-            abi.encode(user1Investment)
-        );
-
-        vm.startPrank(user1);
-        usdc.approve(mockFpmm, user1Investment);
-        (bool success,) = mockFpmm.call(
-            abi.encodeWithSignature("buy(uint256,uint256,uint256)", user1Investment, 0, uint256(0))
-        );
-        assertTrue(success, "user1 buy YES should succeed");
-        vm.stopPrank();
-
-        uint256 user2Investment = 100e6;
-        usdc.mint(user2, user2Investment);
-
-        vm.mockCall(
-            mockFpmm,
-            abi.encodeWithSignature("buy(uint256,uint256,uint256)", user2Investment, 1, 0),
-            abi.encode(user2Investment)
-        );
-
-        vm.startPrank(user2);
-        usdc.approve(mockFpmm, user2Investment);
-        (success,) = mockFpmm.call(
-            abi.encodeWithSignature("buy(uint256,uint256,uint256)", user2Investment, 1, uint256(0))
-        );
-        assertTrue(success, "user2 buy NO should succeed");
-        vm.stopPrank();
-    }
-
-    /// @dev Verifies that mocked prices shifted after asymmetric trades
-    function _verifyPricesShifted() internal {
-        uint256 testAmount = 100e6;
-        vm.mockCall(
-            mockFpmm,
-            abi.encodeWithSignature("calcBuyAmount(uint256,uint256)", testAmount, 0),
-            abi.encode(80e6)
-        );
-        vm.mockCall(
-            mockFpmm,
-            abi.encodeWithSignature("calcBuyAmount(uint256,uint256)", testAmount, 1),
-            abi.encode(130e6)
-        );
-
-        (, bytes memory yesData) = mockFpmm.staticcall(
-            abi.encodeWithSignature("calcBuyAmount(uint256,uint256)", testAmount, 0)
-        );
-        (, bytes memory noData) = mockFpmm.staticcall(
-            abi.encodeWithSignature("calcBuyAmount(uint256,uint256)", testAmount, 1)
-        );
-
-        uint256 yesBuyAmount = abi.decode(yesData, (uint256));
-        uint256 noBuyAmount = abi.decode(noData, (uint256));
-
-        assertTrue(yesBuyAmount < noBuyAmount, "YES should be more expensive than NO after trades");
-        assertTrue(yesBuyAmount < testAmount, "YES price should be above 0.5 (fewer tokens per USDC)");
-        assertTrue(noBuyAmount > testAmount, "NO price should be below 0.5 (more tokens per USDC)");
     }
 
     /// @dev Verifies assertion data is stored correctly
@@ -494,64 +381,6 @@ contract IntegrationTest is Test {
         assertEq(assertion.outcome, true, "assertion outcome should be YES");
         assertFalse(assertion.settled, "assertion should not be settled yet");
         assertFalse(assertion.resolved, "assertion should not be resolved yet");
-    }
-
-    /// @dev Simulates winner (user1) redeeming YES tokens
-    function _redeemAndVerifyWinner(uint256 marketId) internal {
-        bytes32 conditionId = factory.getMarket(marketId).conditionId;
-        bytes32 parentCollectionId = bytes32(0);
-
-        vm.mockCall(
-            conditionalTokens,
-            abi.encodeWithSignature(
-                "redeemPositions(address,bytes32,bytes32,uint256[])",
-                address(usdc), parentCollectionId, conditionId, _indexSets()
-            ),
-            abi.encode()
-        );
-
-        vm.prank(user1);
-        (bool success,) = conditionalTokens.call(
-            abi.encodeWithSignature(
-                "redeemPositions(address,bytes32,bytes32,uint256[])",
-                address(usdc), parentCollectionId, conditionId, _indexSets()
-            )
-        );
-        assertTrue(success, "user1 redeemPositions should succeed");
-
-        // Simulate the USDC payout (in reality CT would transfer)
-        // User1 held YES tokens which won, so they get their investment value
-        uint256 user1Investment = 200e6;
-        uint256 balBefore = usdc.balanceOf(user1);
-        usdc.mint(user1, user1Investment); // simulate CT payout
-        assertEq(usdc.balanceOf(user1) - balBefore, user1Investment, "user1 should receive their payout");
-    }
-
-    /// @dev Simulates loser (user2) redeeming NO tokens (gets nothing)
-    function _redeemAndVerifyLoser(uint256 marketId) internal {
-        bytes32 conditionId = factory.getMarket(marketId).conditionId;
-        bytes32 parentCollectionId = bytes32(0);
-
-        vm.mockCall(
-            conditionalTokens,
-            abi.encodeWithSignature(
-                "redeemPositions(address,bytes32,bytes32,uint256[])",
-                address(usdc), parentCollectionId, conditionId, _indexSets()
-            ),
-            abi.encode()
-        );
-
-        uint256 user2BalanceBefore = usdc.balanceOf(user2);
-        vm.prank(user2);
-        (bool success,) = conditionalTokens.call(
-            abi.encodeWithSignature(
-                "redeemPositions(address,bytes32,bytes32,uint256[])",
-                address(usdc), parentCollectionId, conditionId, _indexSets()
-            )
-        );
-        assertTrue(success, "user2 redeemPositions call should succeed");
-
-        assertEq(usdc.balanceOf(user2), user2BalanceBefore, "user2 (loser) should get nothing");
     }
 
     /// @dev Refunds creation deposit and verifies

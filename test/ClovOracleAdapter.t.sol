@@ -84,13 +84,12 @@ contract ClovOracleAdapterTest is Test {
         IMarketFactory.MarketData memory market = IMarketFactory.MarketData({
             questionId: keccak256(abi.encodePacked(marketId)),
             conditionId: keccak256(abi.encodePacked("condition", marketId)),
-            fpmm: makeAddr("fpmm"),
             creator: alice,
             metadataURI: "ipfs://test",
             creationDeposit: 10e6,
             resolutionTimestamp: resolutionTimestamp,
             status: status,
-            category: IMarketFactory.Category.Sports
+            category: IMarketFactory.Category.Futbol
         });
 
         vm.mockCall(
