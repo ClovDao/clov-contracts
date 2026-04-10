@@ -97,6 +97,19 @@ contract CTFExchange is
         _setSafeFactory(_newSafeFactory);
     }
 
+    /// @notice Sets the default fee rate for markets without a per-market rate
+    /// @param feeRateBps  - The fee rate in basis points (max 200 / 2%)
+    function setDefaultFeeRate(uint256 feeRateBps) external onlyAdmin {
+        _setDefaultFeeRate(feeRateBps);
+    }
+
+    /// @notice Sets the fee rate for a specific market
+    /// @param conditionId - The CTF conditionId
+    /// @param feeRateBps  - The fee rate in basis points (max 200 / 2%)
+    function setMarketFeeRate(bytes32 conditionId, uint256 feeRateBps) external onlyAdmin {
+        _setMarketFeeRate(conditionId, feeRateBps);
+    }
+
     /// @notice Registers a tokenId, its complement and its conditionId for trading on the Exchange
     /// @param token        - The tokenId being registered
     /// @param complement   - The complement of the tokenId

@@ -90,8 +90,9 @@ abstract contract Trading is IFees, ITrading, IHashing, IRegistry, ISignatures, 
         uint256 making = fillAmount;
         (uint256 taking, bytes32 orderHash) = _performOrderChecks(order, making);
 
+        uint256 effectiveFeeRate = _resolveEffectiveFeeRate(order.feeRateBps, getConditionId(order.tokenId));
         uint256 fee = CalculatorHelper.calculateFee(
-            order.feeRateBps, order.side == Side.BUY ? taking : making, order.makerAmount, order.takerAmount, order.side
+            effectiveFeeRate, order.side == Side.BUY ? taking : making, order.makerAmount, order.takerAmount, order.side
         );
 
         (uint256 makerAssetId, uint256 takerAssetId) = _deriveAssetIds(order);
@@ -106,6 +107,7 @@ abstract contract Trading is IFees, ITrading, IHashing, IRegistry, ISignatures, 
         // since the fee is deducted from the assets paid by the Operator
 
         emit OrderFilled(orderHash, order.maker, msg.sender, makerAssetId, takerAssetId, making, taking, fee);
+        _onFill(orderHash, order.maker, msg.sender, makerAssetId, takerAssetId, making, taking, fee);
     }
 
     /// @notice Fills a set of orders against the caller
@@ -114,6 +116,7 @@ abstract contract Trading is IFees, ITrading, IHashing, IRegistry, ISignatures, 
     /// @param to           - The address to receive assets from filling the order
     function _fillOrders(Order[] memory orders, uint256[] memory fillAmounts, address to) internal {
         uint256 length = orders.length;
+        if (length > 50) revert BatchTooLarge();
         uint256 i = 0;
         for (; i < length;) {
             _fillOrder(orders[i], fillAmounts[i], to);
@@ -147,8 +150,9 @@ abstract contract Trading is IFees, ITrading, IHashing, IRegistry, ISignatures, 
         _fillMakerOrders(takerOrder, makerOrders, makerFillAmounts);
 
         taking = _updateTakingWithSurplus(taking, takerAssetId);
+        uint256 effectiveFeeRate = _resolveEffectiveFeeRate(takerOrder.feeRateBps, getConditionId(takerOrder.tokenId));
         uint256 fee = CalculatorHelper.calculateFee(
-            takerOrder.feeRateBps, takerOrder.side == Side.BUY ? taking : making, making, taking, takerOrder.side
+            effectiveFeeRate, takerOrder.side == Side.BUY ? taking : making, making, taking, takerOrder.side
         );
 
         // Execute transfers
@@ -166,6 +170,7 @@ abstract contract Trading is IFees, ITrading, IHashing, IRegistry, ISignatures, 
         emit OrderFilled(
             orderHash, takerOrder.maker, address(this), makerAssetId, takerAssetId, making, taking, fee
         );
+        _onFill(orderHash, takerOrder.maker, address(this), makerAssetId, takerAssetId, making, taking, fee);
 
         emit OrdersMatched(orderHash, takerOrder.maker, makerAssetId, takerAssetId, making, taking);
 
@@ -197,8 +202,9 @@ abstract contract Trading is IFees, ITrading, IHashing, IRegistry, ISignatures, 
 
         uint256 making = fillAmount;
         (uint256 taking, bytes32 orderHash) = _performOrderChecks(makerOrder, making);
+        uint256 effectiveFeeRate = _resolveEffectiveFeeRate(makerOrder.feeRateBps, getConditionId(makerOrder.tokenId));
         uint256 fee = CalculatorHelper.calculateFee(
-            makerOrder.feeRateBps,
+            effectiveFeeRate,
             makerOrder.side == Side.BUY ? taking : making,
             makerOrder.makerAmount,
             makerOrder.takerAmount,
@@ -211,6 +217,7 @@ abstract contract Trading is IFees, ITrading, IHashing, IRegistry, ISignatures, 
         emit OrderFilled(
             orderHash, makerOrder.maker, takerOrder.maker, makerAssetId, takerAssetId, making, taking, fee
         );
+        _onFill(orderHash, makerOrder.maker, takerOrder.maker, makerAssetId, takerAssetId, making, taking, fee);
     }
 
     /// @notice Performs common order computations and validation
@@ -372,5 +379,29 @@ abstract contract Trading is IFees, ITrading, IHashing, IRegistry, ISignatures, 
         uint256 actualAmount = _getBalance(tokenId);
         if (actualAmount < minimumAmount) revert TooLittleTokensReceived();
         return actualAmount;
+    }
+
+    /// @notice Hook called after every order fill. Override to capture fill data.
+    /// @dev Default implementation is a no-op. Phase F MarketRewards will override.
+    function _onFill(
+        bytes32 orderHash,
+        address maker,
+        address taker,
+        uint256 makerAssetId,
+        uint256 takerAssetId,
+        uint256 makingAmount,
+        uint256 takingAmount,
+        uint256 fee
+    ) internal virtual { }
+
+    /// @notice Resolves the effective fee rate as min(orderRate, protocolRate)
+    /// @dev protocolRate = per-market rate if set, otherwise the default fee rate.
+    ///      The order's feeRateBps is the MAX the maker authorizes. The protocol
+    ///      enforces its own rate, and the contract uses whichever is lower.
+    /// @return The effective fee rate in basis points
+    function _resolveEffectiveFeeRate(uint256 orderFeeRate, bytes32 conditionId) internal view returns (uint256) {
+        uint256 marketRate = getMarketFeeRate(conditionId);
+        uint256 protocolRate = marketRate > 0 ? marketRate : getDefaultFeeRate();
+        return orderFeeRate < protocolRate ? orderFeeRate : protocolRate;
     }
 }

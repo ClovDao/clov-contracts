@@ -5,6 +5,12 @@ import { Script, console } from "forge-std/Script.sol";
 import { MarketFactory } from "../src/MarketFactory.sol";
 import { ClovOracleAdapter } from "../src/ClovOracleAdapter.sol";
 import { MarketResolver } from "../src/MarketResolver.sol";
+import { CTFExchange } from "../src/exchange/CTFExchange.sol";
+import { NegRiskAdapter } from "../src/neg-risk/NegRiskAdapter.sol";
+import { NegRiskOperator } from "../src/neg-risk/NegRiskOperator.sol";
+import { NegRiskCtfExchange } from "../src/neg-risk/NegRiskCtfExchange.sol";
+import { ClovNegRiskOracle } from "../src/neg-risk/ClovNegRiskOracle.sol";
+import { Vault } from "../src/neg-risk/Vault.sol";
 
 /// @title Deploy — Clov Protocol full deployment to Polygon Amoy
 /// @notice Deploys Gnosis ConditionalTokens (not available on Amoy),
@@ -16,6 +22,9 @@ contract Deploy is Script {
     // ── External addresses on Amoy (confirmed) ──
     address constant USDC = 0x41E94Eb019C0762f9Bfcf9Fb1E58725BfB0e7582;
     address constant UMA_ORACLE_V3 = 0xd8866E76441df243fc98B892362Fc6264dC3ca80;
+
+    // Gnosis Safe proxy factory on Amoy — needed for EIP-712 signature verification
+    address constant SAFE_FACTORY = 0xa6B71E26C5e0845f74c812102Ca7114b6a896AB2;
 
     // ── Configuration ──
     uint256 constant CREATION_DEPOSIT = 5e6; // 5 USDC (6 decimals)
@@ -88,6 +97,53 @@ contract Deploy is Script {
         marketResolver.initialize(address(marketFactory), address(oracleAdapter));
         console.log("MarketResolver initialized");
 
+        // ── Step 6: Deploy Vault (NegRisk fee vault) ──
+        Vault vault = new Vault();
+        console.log("Vault:", address(vault));
+
+        // ── Step 7: Deploy CTFExchange ──
+        CTFExchange ctfExchange = new CTFExchange(USDC, conditionalTokens, SAFE_FACTORY);
+        console.log("CTFExchange:", address(ctfExchange));
+
+        // ── Step 8: Deploy NegRiskAdapter ──
+        NegRiskAdapter negRiskAdapter = new NegRiskAdapter(conditionalTokens, USDC, address(vault));
+        console.log("NegRiskAdapter:", address(negRiskAdapter));
+
+        // ── Step 8b: Authorize NegRiskAdapter as Vault admin ──
+        vault.addAdmin(address(negRiskAdapter));
+        console.log("Vault: NegRiskAdapter authorized as admin");
+
+        // ── Step 9: Deploy NegRiskOperator ──
+        NegRiskOperator negRiskOperator = new NegRiskOperator(address(negRiskAdapter));
+        console.log("NegRiskOperator:", address(negRiskOperator));
+
+        // ── Step 10: Deploy NegRiskCtfExchange ──
+        NegRiskCtfExchange negRiskCtfExchange =
+            new NegRiskCtfExchange(USDC, conditionalTokens, address(negRiskAdapter), SAFE_FACTORY);
+        console.log("NegRiskCtfExchange:", address(negRiskCtfExchange));
+
+        // ── Step 11: Deploy ClovNegRiskOracle ──
+        ClovNegRiskOracle clovNegRiskOracle = new ClovNegRiskOracle(
+            UMA_ORACLE_V3,
+            USDC, // bond token
+            address(negRiskOperator),
+            BOND_AMOUNT,
+            ASSERTION_LIVENESS
+        );
+        console.log("ClovNegRiskOracle:", address(clovNegRiskOracle));
+
+        // ── Step 12: Wire NegRiskOperator → ClovNegRiskOracle (one-time, irreversible) ──
+        negRiskOperator.setOracle(address(clovNegRiskOracle));
+        console.log("NegRiskOperator oracle set");
+
+        // ── Step 13: Add deployer as operator on CTFExchange ──
+        ctfExchange.addOperator(deployer);
+        console.log("CTFExchange operator added:", deployer);
+
+        // ── Step 14: Add deployer as operator on NegRiskCtfExchange ──
+        negRiskCtfExchange.addOperator(deployer);
+        console.log("NegRiskCtfExchange operator added:", deployer);
+
         vm.stopBroadcast();
 
         // ── Summary ──
@@ -97,8 +153,15 @@ contract Deploy is Script {
         console.log("MarketFactory:              ", address(marketFactory));
         console.log("ClovOracleAdapter:          ", address(oracleAdapter));
         console.log("MarketResolver:             ", address(marketResolver));
+        console.log("Vault:                      ", address(vault));
+        console.log("CTFExchange:                ", address(ctfExchange));
+        console.log("NegRiskAdapter:             ", address(negRiskAdapter));
+        console.log("NegRiskOperator:            ", address(negRiskOperator));
+        console.log("NegRiskCtfExchange:         ", address(negRiskCtfExchange));
+        console.log("ClovNegRiskOracle:          ", address(clovNegRiskOracle));
         console.log("USDC (collateral + bond):   ", USDC);
         console.log("UMA OptimisticOracleV3:     ", UMA_ORACLE_V3);
+        console.log("Safe Factory:               ", SAFE_FACTORY);
         console.log("=== All contracts deployed and wired ===");
     }
 
