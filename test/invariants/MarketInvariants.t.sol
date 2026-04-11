@@ -17,7 +17,7 @@ import { ERC20 } from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 // ──────────────────────────────────────────────
 
 contract InvariantMockERC20 is ERC20 {
-    constructor() ERC20("Mock USDC", "USDC") {}
+    constructor() ERC20("Mock USDC", "USDC") { }
 
     function mint(address to, uint256 amount) external {
         _mint(to, amount);
@@ -111,9 +111,7 @@ contract MarketHandler is Test {
         usdc.approve(address(factory), CREATION_DEPOSIT);
 
         uint256 marketId = factory.createMarket(
-            "ipfs://invariant-test",
-            block.timestamp + hoursAhead * 1 hours,
-            IMarketFactory.Category.Futbol
+            "ipfs://invariant-test", block.timestamp + hoursAhead * 1 hours, IMarketFactory.Category.Futbol
         );
         vm.stopPrank();
 
@@ -138,11 +136,7 @@ contract MarketHandler is Test {
         ghost_assertionNonce++;
         bytes32 assertId = keccak256(abi.encodePacked("assert", ghost_assertionNonce));
 
-        vm.mockCall(
-            umaOracle,
-            abi.encodeWithSelector(IOptimisticOracleV3.assertTruth.selector),
-            abi.encode(assertId)
-        );
+        vm.mockCall(umaOracle, abi.encodeWithSelector(IOptimisticOracleV3.assertTruth.selector), abi.encode(assertId));
 
         usdc.mint(asserter, BOND_AMOUNT);
         vm.prank(asserter);
@@ -294,20 +288,14 @@ contract MarketInvariants is StdInvariant, Test {
 
         // ── Mock external contracts ──
         vm.mockCall(
-            conditionalTokens,
-            abi.encodeWithSelector(IConditionalTokens.prepareCondition.selector),
-            abi.encode()
+            conditionalTokens, abi.encodeWithSelector(IConditionalTokens.prepareCondition.selector), abi.encode()
         );
         vm.mockCall(
             conditionalTokens,
             abi.encodeWithSelector(IConditionalTokens.getConditionId.selector),
             abi.encode(MOCK_CONDITION_ID)
         );
-        vm.mockCall(
-            conditionalTokens,
-            abi.encodeWithSelector(IConditionalTokens.reportPayouts.selector),
-            abi.encode()
-        );
+        vm.mockCall(conditionalTokens, abi.encodeWithSelector(IConditionalTokens.reportPayouts.selector), abi.encode());
         vm.mockCall(
             umaOracle,
             abi.encodeWithSelector(IOptimisticOracleV3.defaultIdentifier.selector),
@@ -315,18 +303,9 @@ contract MarketInvariants is StdInvariant, Test {
         );
 
         // ── Deploy real contracts (staged with initialize) ──
-        factory = new MarketFactory(
-            address(usdc),
-            conditionalTokens,
-            CREATION_DEPOSIT
-        );
+        factory = new MarketFactory(address(usdc), conditionalTokens, CREATION_DEPOSIT);
 
-        oracleAdapter = new ClovOracleAdapter(
-            umaOracle,
-            address(usdc),
-            BOND_AMOUNT,
-            ASSERTION_LIVENESS
-        );
+        oracleAdapter = new ClovOracleAdapter(umaOracle, address(usdc), BOND_AMOUNT, ASSERTION_LIVENESS);
 
         resolver = new MarketResolver(conditionalTokens);
 
@@ -336,15 +315,7 @@ contract MarketInvariants is StdInvariant, Test {
         resolver.initialize(address(factory), address(oracleAdapter));
 
         // ── Deploy Handler ──
-        handler = new MarketHandler(
-            factory,
-            oracleAdapter,
-            resolver,
-            usdc,
-            conditionalTokens,
-            umaOracle,
-            address(this)
-        );
+        handler = new MarketHandler(factory, oracleAdapter, resolver, usdc, conditionalTokens, umaOracle, address(this));
 
         targetContract(address(handler));
     }
@@ -354,11 +325,7 @@ contract MarketInvariants is StdInvariant, Test {
     // ──────────────────────────────────────────────
 
     function invariant_marketCountConsistency() public view {
-        assertEq(
-            factory.marketCount(),
-            handler.ghost_marketsCreated(),
-            "marketCount must equal ghost_marketsCreated"
-        );
+        assertEq(factory.marketCount(), handler.ghost_marketsCreated(), "marketCount must equal ghost_marketsCreated");
 
         uint256 count = factory.marketCount();
         for (uint256 i = 0; i < count; i++) {

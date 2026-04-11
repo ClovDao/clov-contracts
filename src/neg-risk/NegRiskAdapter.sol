@@ -1,17 +1,17 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import {ERC1155TokenReceiver} from "solmate/tokens/ERC1155.sol";
-import {ERC20} from "solmate/tokens/ERC20.sol";
-import {SafeTransferLib} from "solmate/utils/SafeTransferLib.sol";
-import {WrappedCollateral} from "./WrappedCollateral.sol";
-import {MarketData, MarketStateManager, IMarketStateManagerEE} from "./modules/MarketDataManager.sol";
-import {CTHelpers} from "./libraries/CTHelpers.sol";
-import {Helpers} from "./libraries/Helpers.sol";
-import {NegRiskIdLib} from "./libraries/NegRiskIdLib.sol";
-import {IConditionalTokens} from "./interfaces/IConditionalTokens.sol";
-import {Auth} from "./modules/Auth.sol";
-import {IAuthEE} from "./modules/interfaces/IAuth.sol";
+import { ERC1155TokenReceiver } from "solmate/tokens/ERC1155.sol";
+import { ERC20 } from "solmate/tokens/ERC20.sol";
+import { SafeTransferLib } from "solmate/utils/SafeTransferLib.sol";
+import { WrappedCollateral } from "./WrappedCollateral.sol";
+import { MarketData, MarketStateManager, IMarketStateManagerEE } from "./modules/MarketDataManager.sol";
+import { CTHelpers } from "./libraries/CTHelpers.sol";
+import { Helpers } from "./libraries/Helpers.sol";
+import { NegRiskIdLib } from "./libraries/NegRiskIdLib.sol";
+import { IConditionalTokens } from "./interfaces/IConditionalTokens.sol";
+import { Auth } from "./modules/Auth.sol";
+import { IAuthEE } from "./modules/interfaces/IAuth.sol";
 
 /// @title INegRiskAdapterEE
 /// @notice NegRiskAdapter Errors and Events

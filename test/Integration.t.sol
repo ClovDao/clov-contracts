@@ -15,7 +15,7 @@ import { ERC20 } from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
 /// @dev Mock USDC with public mint
 contract MockUSDC is ERC20 {
-    constructor() ERC20("Mock USDC", "USDC") {}
+    constructor() ERC20("Mock USDC", "USDC") { }
 
     function mint(address to, uint256 amount) external {
         _mint(to, amount);
@@ -81,20 +81,14 @@ contract IntegrationTest is Test {
 
         // ── Mock ConditionalTokens ──
         vm.mockCall(
-            conditionalTokens,
-            abi.encodeWithSelector(IConditionalTokens.prepareCondition.selector),
-            abi.encode()
+            conditionalTokens, abi.encodeWithSelector(IConditionalTokens.prepareCondition.selector), abi.encode()
         );
         vm.mockCall(
             conditionalTokens,
             abi.encodeWithSelector(IConditionalTokens.getConditionId.selector),
             abi.encode(MOCK_CONDITION_ID)
         );
-        vm.mockCall(
-            conditionalTokens,
-            abi.encodeWithSelector(IConditionalTokens.reportPayouts.selector),
-            abi.encode()
-        );
+        vm.mockCall(conditionalTokens, abi.encodeWithSelector(IConditionalTokens.reportPayouts.selector), abi.encode());
 
         // ── Mock UMA Oracle ──
         vm.mockCall(
@@ -103,24 +97,13 @@ contract IntegrationTest is Test {
             abi.encode(DEFAULT_IDENTIFIER)
         );
         vm.mockCall(
-            umaOracle,
-            abi.encodeWithSelector(IOptimisticOracleV3.assertTruth.selector),
-            abi.encode(MOCK_ASSERTION_ID)
+            umaOracle, abi.encodeWithSelector(IOptimisticOracleV3.assertTruth.selector), abi.encode(MOCK_ASSERTION_ID)
         );
 
         // ── Deploy real Clov contracts (staged with initialize) ──
-        factory = new MarketFactory(
-            address(usdc),
-            conditionalTokens,
-            CREATION_DEPOSIT
-        );
+        factory = new MarketFactory(address(usdc), conditionalTokens, CREATION_DEPOSIT);
 
-        oracleAdapter = new ClovOracleAdapter(
-            umaOracle,
-            address(usdc),
-            BOND_AMOUNT,
-            ASSERTION_LIVENESS
-        );
+        oracleAdapter = new ClovOracleAdapter(umaOracle, address(usdc), BOND_AMOUNT, ASSERTION_LIVENESS);
 
         resolver = new MarketResolver(conditionalTokens);
 
@@ -137,9 +120,7 @@ contract IntegrationTest is Test {
     function test_fullLifecycle_createAssertResolve() public {
         // PHASE 1: Create Market
         uint256 marketId = _createMarketAsCreator(
-            "ipfs://will-team-a-win",
-            block.timestamp + 2 hours,
-            IMarketFactory.Category.Futbol
+            "ipfs://will-team-a-win", block.timestamp + 2 hours, IMarketFactory.Category.Futbol
         );
 
         assertEq(marketId, 0, "first market should be id 0");
@@ -154,11 +135,7 @@ contract IntegrationTest is Test {
         }
 
         // Factory should hold the creation deposit
-        assertEq(
-            usdc.balanceOf(address(factory)),
-            CREATION_DEPOSIT,
-            "factory should hold deposit"
-        );
+        assertEq(usdc.balanceOf(address(factory)), CREATION_DEPOSIT, "factory should hold deposit");
         // Creator should have 0 left
         assertEq(usdc.balanceOf(creator), 0, "creator should have spent deposit");
 
@@ -214,9 +191,7 @@ contract IntegrationTest is Test {
     function test_lifecycle_assertionDenied_marketResetsToActive() public {
         // Create market
         uint256 marketId = _createMarketAsCreator(
-            "ipfs://disputed-market",
-            block.timestamp + 2 hours,
-            IMarketFactory.Category.Esports
+            "ipfs://disputed-market", block.timestamp + 2 hours, IMarketFactory.Category.Esports
         );
 
         IMarketFactory.MarketData memory market = factory.getMarket(marketId);
@@ -252,9 +227,7 @@ contract IntegrationTest is Test {
         // A new assertion can now be made
         bytes32 secondAssertionId = keccak256("second-assertion");
         vm.mockCall(
-            umaOracle,
-            abi.encodeWithSelector(IOptimisticOracleV3.assertTruth.selector),
-            abi.encode(secondAssertionId)
+            umaOracle, abi.encodeWithSelector(IOptimisticOracleV3.assertTruth.selector), abi.encode(secondAssertionId)
         );
 
         usdc.mint(asserter, BOND_AMOUNT);
@@ -316,12 +289,10 @@ contract IntegrationTest is Test {
         vm.startPrank(creator);
         usdc.approve(address(factory), CREATION_DEPOSIT * 2);
 
-        uint256 market0 = factory.createMarket(
-            "ipfs://market-0", block.timestamp + 2 hours, IMarketFactory.Category.Futbol
-        );
-        uint256 market1 = factory.createMarket(
-            "ipfs://market-1", block.timestamp + 3 hours, IMarketFactory.Category.Esports
-        );
+        uint256 market0 =
+            factory.createMarket("ipfs://market-0", block.timestamp + 2 hours, IMarketFactory.Category.Futbol);
+        uint256 market1 =
+            factory.createMarket("ipfs://market-1", block.timestamp + 3 hours, IMarketFactory.Category.Esports);
         vm.stopPrank();
 
         assertEq(market0, 0);
@@ -363,11 +334,7 @@ contract IntegrationTest is Test {
         vm.startPrank(creator);
         usdc.approve(address(factory), CREATION_DEPOSIT);
 
-        uint256 marketId = factory.createMarket(
-            metadataURI,
-            resolutionTimestamp,
-            category
-        );
+        uint256 marketId = factory.createMarket(metadataURI, resolutionTimestamp, category);
         vm.stopPrank();
 
         return marketId;
@@ -390,20 +357,14 @@ contract IntegrationTest is Test {
         factory.refundCreationDeposit(marketId);
 
         assertEq(
-            usdc.balanceOf(creator),
-            creatorBalanceBefore + CREATION_DEPOSIT,
-            "creator should receive deposit back"
+            usdc.balanceOf(creator), creatorBalanceBefore + CREATION_DEPOSIT, "creator should receive deposit back"
         );
         assertEq(factory.getMarket(marketId).creationDeposit, 0, "deposit should be zeroed out");
     }
 
     /// @dev Asserts and resolves a market in one step (mocks assertTruth with given ID)
     function _assertAndResolveMarket(uint256 marketId, bool outcome, bytes32 assertId) internal {
-        vm.mockCall(
-            umaOracle,
-            abi.encodeWithSelector(IOptimisticOracleV3.assertTruth.selector),
-            abi.encode(assertId)
-        );
+        vm.mockCall(umaOracle, abi.encodeWithSelector(IOptimisticOracleV3.assertTruth.selector), abi.encode(assertId));
 
         usdc.mint(asserter, BOND_AMOUNT);
         vm.prank(asserter);

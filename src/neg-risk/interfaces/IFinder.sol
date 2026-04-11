@@ -12,8 +12,7 @@ interface IFinder {
      * registered.
      * @param implementationAddress address of the deployed contract that implements the interface.
      */
-    function changeImplementationAddress(bytes32 interfaceName, address implementationAddress)
-        external;
+    function changeImplementationAddress(bytes32 interfaceName, address implementationAddress) external;
 
     /**
      * @notice Gets the address of the contract that implements the given `interfaceName`.

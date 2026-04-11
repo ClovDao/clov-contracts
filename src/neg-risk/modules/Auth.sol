@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.15;
 
-import {IAuth} from "./interfaces/IAuth.sol";
+import { IAuth } from "./interfaces/IAuth.sol";
 
 /// @title Auth
 /// @author Polymarket (original), Clov (fork)

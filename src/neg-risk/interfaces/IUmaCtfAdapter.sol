@@ -68,9 +68,7 @@ interface IUmaCtfAdapterEE {
     event QuestionReset(bytes32 indexed questionID);
 
     /// @notice Emitted when a question is resolved
-    event QuestionResolved(
-        bytes32 indexed questionID, int256 indexed settledPrice, uint256[] payouts
-    );
+    event QuestionResolved(bytes32 indexed questionID, int256 indexed settledPrice, uint256[] payouts);
 
     /// @notice Emitted when a question is emergency resolved
     event QuestionEmergencyResolved(bytes32 indexed questionID, uint256[] payouts);

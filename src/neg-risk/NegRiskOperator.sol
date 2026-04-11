@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import {NegRiskIdLib} from "./libraries/NegRiskIdLib.sol";
-import {Auth} from "./modules/Auth.sol";
-import {IAuthEE} from "./modules/interfaces/IAuth.sol";
+import { NegRiskIdLib } from "./libraries/NegRiskIdLib.sol";
+import { Auth } from "./modules/Auth.sol";
+import { IAuthEE } from "./modules/interfaces/IAuth.sol";
 
-import {NegRiskAdapter} from "./NegRiskAdapter.sol";
+import { NegRiskAdapter } from "./NegRiskAdapter.sol";
 
 /// @title INegRiskOperatorEE
 /// @notice NegRiskOperator Errors and Events

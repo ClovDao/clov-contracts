@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.15;
 
-import {IAuth, IAuthEE} from "./IAuth.sol";
+import { IAuth, IAuthEE } from "./IAuth.sol";
 
 interface IAdminEE is IAuthEE {
     error QuestionIsPaused();
@@ -21,4 +21,4 @@ interface IAdminEE is IAuthEE {
     event ContractGloballyUnpaused();
 }
 
-interface IAdmin is IAuth, IAdminEE {}
+interface IAdmin is IAuth, IAdminEE { }

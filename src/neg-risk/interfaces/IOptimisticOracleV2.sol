@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.15;
 
-import {IERC20} from "./IERC20.sol";
+import { IERC20 } from "./IERC20.sol";
 
 struct RequestSettings {
     bool eventBased; // True if the request is set to be event-based.
@@ -77,12 +77,9 @@ interface IOptimisticOracleV2 {
     /// @return totalBond the amount that's pulled from the disputer's wallet as a bond. The bond
     /// will be returned to
     /// the disputer once settled if the dispute was valid (the proposal was incorrect).
-    function disputePrice(
-        address requester,
-        bytes32 identifier,
-        uint256 timestamp,
-        bytes memory ancillaryData
-    ) external returns (uint256 totalBond);
+    function disputePrice(address requester, bytes32 identifier, uint256 timestamp, bytes memory ancillaryData)
+        external
+        returns (uint256 totalBond);
 
     /// @notice Set the proposal bond associated with a price request.
     /// @param identifier price identifier to identify the existing request.
@@ -92,12 +89,9 @@ interface IOptimisticOracleV2 {
     /// @return totalBond new bond + final fee that the proposer and disputer will be required to
     /// pay. This can be
     /// changed again with a subsequent call to setBond().
-    function setBond(
-        bytes32 identifier,
-        uint256 timestamp,
-        bytes memory ancillaryData,
-        uint256 bond
-    ) external returns (uint256 totalBond);
+    function setBond(bytes32 identifier, uint256 timestamp, bytes memory ancillaryData, uint256 bond)
+        external
+        returns (uint256 totalBond);
 
     /// @notice Sets the request to be an "event-based" request.
     /// @dev Calling this method has a few impacts on the request:
@@ -117,8 +111,7 @@ interface IOptimisticOracleV2 {
     /// @param identifier price identifier to identify the existing request.
     /// @param timestamp timestamp to identify the existing request.
     /// @param ancillaryData ancillary data of the price being requested.
-    function setEventBased(bytes32 identifier, uint256 timestamp, bytes memory ancillaryData)
-        external;
+    function setEventBased(bytes32 identifier, uint256 timestamp, bytes memory ancillaryData) external;
 
     /// @notice Sets which callbacks should be enabled for the request.
     /// @param identifier price identifier to identify the existing request.
@@ -158,12 +151,9 @@ interface IOptimisticOracleV2 {
     /// @return payout the amount that the "winner" (proposer or disputer) receives on settlement.
     /// This amount includes
     /// the returned bonds as well as additional rewards.
-    function settle(
-        address requester,
-        bytes32 identifier,
-        uint256 timestamp,
-        bytes memory ancillaryData
-    ) external returns (uint256 payout);
+    function settle(address requester, bytes32 identifier, uint256 timestamp, bytes memory ancillaryData)
+        external
+        returns (uint256 payout);
 
     /// @notice Retrieves a price that was previously requested by a caller. Reverts if the request
     /// is not settled
@@ -186,12 +176,10 @@ interface IOptimisticOracleV2 {
     /// @param ancillaryData ancillary data of the price being requested.
     /// @return the Request data structure.
     ////
-    function getRequest(
-        address requester,
-        bytes32 identifier,
-        uint256 timestamp,
-        bytes memory ancillaryData
-    ) external view returns (Request memory);
+    function getRequest(address requester, bytes32 identifier, uint256 timestamp, bytes memory ancillaryData)
+        external
+        view
+        returns (Request memory);
 
     /// @notice Checks if a given request has resolved or been settled (i.e the optimistic oracle
     /// has a price).
@@ -200,12 +188,10 @@ interface IOptimisticOracleV2 {
     /// @param timestamp timestamp to identify the existing request.
     /// @param ancillaryData ancillary data of the price being requested.
     /// @return true if price has resolved or settled, false otherwise.
-    function hasPrice(
-        address requester,
-        bytes32 identifier,
-        uint256 timestamp,
-        bytes memory ancillaryData
-    ) external view returns (bool);
+    function hasPrice(address requester, bytes32 identifier, uint256 timestamp, bytes memory ancillaryData)
+        external
+        view
+        returns (bool);
 
     function defaultLiveness() external view returns (uint256);
 }

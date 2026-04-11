@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import {FeeModule, IExchange} from "exchange-fee-module/FeeModule.sol";
-import {IConditionalTokens} from "./interfaces/IConditionalTokens.sol";
+import { FeeModule, IExchange } from "exchange-fee-module/FeeModule.sol";
+import { IConditionalTokens } from "./interfaces/IConditionalTokens.sol";
 
 /// @title NegRiskFeeModule
 /// @notice A slightly modified version of FeeModule
