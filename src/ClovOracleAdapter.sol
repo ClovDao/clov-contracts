@@ -87,12 +87,9 @@ contract ClovOracleAdapter is IClovOracleAdapter, Ownable, Pausable, ReentrancyG
     // Constructor
     // ──────────────────────────────────────────────
 
-    constructor(
-        address _umaOracle,
-        address _bondToken,
-        uint256 _bondAmount,
-        uint64 _assertionLiveness
-    ) Ownable(msg.sender) {
+    constructor(address _umaOracle, address _bondToken, uint256 _bondAmount, uint64 _assertionLiveness)
+        Ownable(msg.sender)
+    {
         if (_umaOracle == address(0) || _bondToken == address(0)) {
             revert ZeroAddress();
         }

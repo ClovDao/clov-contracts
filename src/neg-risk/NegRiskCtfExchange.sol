@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import {CTFExchange} from "../exchange/CTFExchange.sol";
-import {IConditionalTokens} from "./interfaces/IConditionalTokens.sol";
+import { CTFExchange } from "../exchange/CTFExchange.sol";
+import { IConditionalTokens } from "./interfaces/IConditionalTokens.sol";
 
 /// @title NegRiskCtfExchange
 /// @notice A slightly modified version of CTFExchange

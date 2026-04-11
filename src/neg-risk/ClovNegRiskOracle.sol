@@ -128,11 +128,7 @@ contract ClovNegRiskOracle is Ownable {
         );
 
         questionAssertions[assertionId] = QuestionAssertion({
-            requestId: requestId,
-            assertionId: assertionId,
-            asserter: asserter,
-            outcome: outcome,
-            settled: false
+            requestId: requestId, assertionId: assertionId, asserter: asserter, outcome: outcome, settled: false
         });
 
         requestToAssertion[requestId] = assertionId;

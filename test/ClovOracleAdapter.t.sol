@@ -13,7 +13,7 @@ import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
 import { Pausable } from "@openzeppelin/contracts/utils/Pausable.sol";
 
 contract MockERC20 is ERC20 {
-    constructor() ERC20("Mock USDC", "USDC") {}
+    constructor() ERC20("Mock USDC", "USDC") { }
 
     function mint(address to, uint256 amount) external {
         _mint(to, amount);
@@ -22,14 +22,9 @@ contract MockERC20 is ERC20 {
 
 /// @dev Harness that exposes internal _uint256ToString for direct testing
 contract ClovOracleAdapterHarness is ClovOracleAdapter {
-    constructor(
-        address _umaOracle,
-        address _bondToken,
-        uint256 _bondAmount,
-        uint64 _assertionLiveness
-    )
+    constructor(address _umaOracle, address _bondToken, uint256 _bondAmount, uint64 _assertionLiveness)
         ClovOracleAdapter(_umaOracle, _bondToken, _bondAmount, _assertionLiveness)
-    {}
+    { }
 
     function exposed_uint256ToString(uint256 value) external pure returns (string memory) {
         return _uint256ToString(value);
@@ -64,9 +59,7 @@ contract ClovOracleAdapterTest is Test {
             abi.encode(DEFAULT_IDENTIFIER)
         );
 
-        adapter = new ClovOracleAdapterHarness(
-            umaOracle, address(bondToken), BOND_AMOUNT, ASSERTION_LIVENESS
-        );
+        adapter = new ClovOracleAdapterHarness(umaOracle, address(bondToken), BOND_AMOUNT, ASSERTION_LIVENESS);
         adapter.initialize(marketFactory, marketResolver);
     }
 
@@ -98,10 +91,7 @@ contract ClovOracleAdapterTest is Test {
     }
 
     /// @dev Sets up a full assertOutcome flow and returns the assertionId
-    function _assertOutcome(uint256 marketId, bool outcome, address asserter)
-        internal
-        returns (bytes32 assertionId)
-    {
+    function _assertOutcome(uint256 marketId, bool outcome, address asserter) internal returns (bytes32 assertionId) {
         _mockActiveMarket(marketId);
 
         // Mint bond tokens to asserter and approve adapter
@@ -111,15 +101,11 @@ contract ClovOracleAdapterTest is Test {
 
         // Mock UMA assertTruth to return our mock assertion ID
         vm.mockCall(
-            umaOracle,
-            abi.encodeWithSelector(IOptimisticOracleV3.assertTruth.selector),
-            abi.encode(MOCK_ASSERTION_ID)
+            umaOracle, abi.encodeWithSelector(IOptimisticOracleV3.assertTruth.selector), abi.encode(MOCK_ASSERTION_ID)
         );
 
         // Mock updateMarketStatus
-        vm.mockCall(
-            marketFactory, abi.encodeWithSelector(IMarketFactory.updateMarketStatus.selector), abi.encode()
-        );
+        vm.mockCall(marketFactory, abi.encodeWithSelector(IMarketFactory.updateMarketStatus.selector), abi.encode());
 
         assertionId = adapter.assertOutcome(marketId, outcome, asserter);
     }
@@ -147,7 +133,11 @@ contract ClovOracleAdapterTest is Test {
     function test_constructor_revertsOnZeroAddress_bondToken() public {
         // Need to mock defaultIdentifier for any valid umaOracle
         address newUma = makeAddr("newUma");
-        vm.mockCall(newUma, abi.encodeWithSelector(IOptimisticOracleV3.defaultIdentifier.selector), abi.encode(DEFAULT_IDENTIFIER));
+        vm.mockCall(
+            newUma,
+            abi.encodeWithSelector(IOptimisticOracleV3.defaultIdentifier.selector),
+            abi.encode(DEFAULT_IDENTIFIER)
+        );
 
         vm.expectRevert(ClovOracleAdapter.ZeroAddress.selector);
         new ClovOracleAdapterHarness(newUma, address(0), BOND_AMOUNT, ASSERTION_LIVENESS);
@@ -155,18 +145,28 @@ contract ClovOracleAdapterTest is Test {
 
     function test_initialize_revertsOnZeroAddress_marketFactory() public {
         address newUma = makeAddr("newUma2");
-        vm.mockCall(newUma, abi.encodeWithSelector(IOptimisticOracleV3.defaultIdentifier.selector), abi.encode(DEFAULT_IDENTIFIER));
+        vm.mockCall(
+            newUma,
+            abi.encodeWithSelector(IOptimisticOracleV3.defaultIdentifier.selector),
+            abi.encode(DEFAULT_IDENTIFIER)
+        );
 
-        ClovOracleAdapterHarness a = new ClovOracleAdapterHarness(newUma, address(bondToken), BOND_AMOUNT, ASSERTION_LIVENESS);
+        ClovOracleAdapterHarness a =
+            new ClovOracleAdapterHarness(newUma, address(bondToken), BOND_AMOUNT, ASSERTION_LIVENESS);
         vm.expectRevert(ClovOracleAdapter.ZeroAddress.selector);
         a.initialize(address(0), marketResolver);
     }
 
     function test_initialize_revertsOnZeroAddress_marketResolver() public {
         address newUma = makeAddr("newUma3");
-        vm.mockCall(newUma, abi.encodeWithSelector(IOptimisticOracleV3.defaultIdentifier.selector), abi.encode(DEFAULT_IDENTIFIER));
+        vm.mockCall(
+            newUma,
+            abi.encodeWithSelector(IOptimisticOracleV3.defaultIdentifier.selector),
+            abi.encode(DEFAULT_IDENTIFIER)
+        );
 
-        ClovOracleAdapterHarness a = new ClovOracleAdapterHarness(newUma, address(bondToken), BOND_AMOUNT, ASSERTION_LIVENESS);
+        ClovOracleAdapterHarness a =
+            new ClovOracleAdapterHarness(newUma, address(bondToken), BOND_AMOUNT, ASSERTION_LIVENESS);
         vm.expectRevert(ClovOracleAdapter.ZeroAddress.selector);
         a.initialize(marketFactory, address(0));
     }
@@ -218,7 +218,9 @@ contract ClovOracleAdapterTest is Test {
         vm.prank(alice);
         bondToken.approve(address(adapter), BOND_AMOUNT);
 
-        vm.mockCall(umaOracle, abi.encodeWithSelector(IOptimisticOracleV3.assertTruth.selector), abi.encode(MOCK_ASSERTION_ID));
+        vm.mockCall(
+            umaOracle, abi.encodeWithSelector(IOptimisticOracleV3.assertTruth.selector), abi.encode(MOCK_ASSERTION_ID)
+        );
         vm.mockCall(marketFactory, abi.encodeWithSelector(IMarketFactory.updateMarketStatus.selector), abi.encode());
 
         uint256 aliceBefore = bondToken.balanceOf(alice);
@@ -236,7 +238,9 @@ contract ClovOracleAdapterTest is Test {
         vm.prank(alice);
         bondToken.approve(address(adapter), BOND_AMOUNT);
 
-        vm.mockCall(umaOracle, abi.encodeWithSelector(IOptimisticOracleV3.assertTruth.selector), abi.encode(MOCK_ASSERTION_ID));
+        vm.mockCall(
+            umaOracle, abi.encodeWithSelector(IOptimisticOracleV3.assertTruth.selector), abi.encode(MOCK_ASSERTION_ID)
+        );
         vm.mockCall(marketFactory, abi.encodeWithSelector(IMarketFactory.updateMarketStatus.selector), abi.encode());
 
         vm.expectEmit(true, true, true, true);
@@ -310,7 +314,9 @@ contract ClovOracleAdapterTest is Test {
         vm.prank(alice);
         bondToken.approve(address(adapter), BOND_AMOUNT);
 
-        vm.mockCall(umaOracle, abi.encodeWithSelector(IOptimisticOracleV3.assertTruth.selector), abi.encode(MOCK_ASSERTION_ID));
+        vm.mockCall(
+            umaOracle, abi.encodeWithSelector(IOptimisticOracleV3.assertTruth.selector), abi.encode(MOCK_ASSERTION_ID)
+        );
         vm.mockCall(marketFactory, abi.encodeWithSelector(IMarketFactory.updateMarketStatus.selector), abi.encode());
 
         vm.expectCall(
@@ -331,7 +337,9 @@ contract ClovOracleAdapterTest is Test {
         vm.prank(alice);
         bondToken.approve(address(adapter), BOND_AMOUNT);
 
-        vm.mockCall(umaOracle, abi.encodeWithSelector(IOptimisticOracleV3.assertTruth.selector), abi.encode(MOCK_ASSERTION_ID));
+        vm.mockCall(
+            umaOracle, abi.encodeWithSelector(IOptimisticOracleV3.assertTruth.selector), abi.encode(MOCK_ASSERTION_ID)
+        );
         vm.mockCall(marketFactory, abi.encodeWithSelector(IMarketFactory.updateMarketStatus.selector), abi.encode());
 
         adapter.assertOutcome(marketId, true, alice);
@@ -409,8 +417,7 @@ contract ClovOracleAdapterTest is Test {
 
         vm.mockCall(marketResolver, abi.encodeWithSelector(IMarketResolver.resolve.selector), abi.encode());
         vm.expectCall(
-            marketResolver,
-            abi.encodeWithSelector(IMarketResolver.resolve.selector, marketId, expectedPayouts)
+            marketResolver, abi.encodeWithSelector(IMarketResolver.resolve.selector, marketId, expectedPayouts)
         );
 
         vm.prank(umaOracle);
@@ -428,8 +435,7 @@ contract ClovOracleAdapterTest is Test {
 
         vm.mockCall(marketResolver, abi.encodeWithSelector(IMarketResolver.resolve.selector), abi.encode());
         vm.expectCall(
-            marketResolver,
-            abi.encodeWithSelector(IMarketResolver.resolve.selector, marketId, expectedPayouts)
+            marketResolver, abi.encodeWithSelector(IMarketResolver.resolve.selector, marketId, expectedPayouts)
         );
 
         vm.prank(umaOracle);
@@ -854,7 +860,9 @@ contract ClovOracleAdapterTest is Test {
         bondToken.mint(alice, BOND_AMOUNT);
         vm.prank(alice);
         bondToken.approve(address(adapter), BOND_AMOUNT);
-        vm.mockCall(umaOracle, abi.encodeWithSelector(IOptimisticOracleV3.assertTruth.selector), abi.encode(assertionId0));
+        vm.mockCall(
+            umaOracle, abi.encodeWithSelector(IOptimisticOracleV3.assertTruth.selector), abi.encode(assertionId0)
+        );
         vm.mockCall(marketFactory, abi.encodeWithSelector(IMarketFactory.updateMarketStatus.selector), abi.encode());
         adapter.assertOutcome(marketId0, true, alice);
 
@@ -863,7 +871,9 @@ contract ClovOracleAdapterTest is Test {
         bondToken.mint(bob, BOND_AMOUNT);
         vm.prank(bob);
         bondToken.approve(address(adapter), BOND_AMOUNT);
-        vm.mockCall(umaOracle, abi.encodeWithSelector(IOptimisticOracleV3.assertTruth.selector), abi.encode(assertionId1));
+        vm.mockCall(
+            umaOracle, abi.encodeWithSelector(IOptimisticOracleV3.assertTruth.selector), abi.encode(assertionId1)
+        );
         adapter.assertOutcome(marketId1, false, bob);
 
         // Verify independent state
@@ -893,7 +903,9 @@ contract ClovOracleAdapterTest is Test {
         bondToken.mint(alice, BOND_AMOUNT);
         vm.prank(alice);
         bondToken.approve(address(adapter), BOND_AMOUNT);
-        vm.mockCall(umaOracle, abi.encodeWithSelector(IOptimisticOracleV3.assertTruth.selector), abi.encode(assertionId0));
+        vm.mockCall(
+            umaOracle, abi.encodeWithSelector(IOptimisticOracleV3.assertTruth.selector), abi.encode(assertionId0)
+        );
         vm.mockCall(marketFactory, abi.encodeWithSelector(IMarketFactory.updateMarketStatus.selector), abi.encode());
         adapter.assertOutcome(marketId0, true, alice);
 
@@ -901,7 +913,9 @@ contract ClovOracleAdapterTest is Test {
         bondToken.mint(bob, BOND_AMOUNT);
         vm.prank(bob);
         bondToken.approve(address(adapter), BOND_AMOUNT);
-        vm.mockCall(umaOracle, abi.encodeWithSelector(IOptimisticOracleV3.assertTruth.selector), abi.encode(assertionId1));
+        vm.mockCall(
+            umaOracle, abi.encodeWithSelector(IOptimisticOracleV3.assertTruth.selector), abi.encode(assertionId1)
+        );
         adapter.assertOutcome(marketId1, false, bob);
 
         // Resolve market 0 only
@@ -1031,7 +1045,9 @@ contract ClovOracleAdapterTest is Test {
         vm.prank(alice);
         bondToken.approve(address(adapter), BOND_AMOUNT);
 
-        vm.mockCall(umaOracle, abi.encodeWithSelector(IOptimisticOracleV3.assertTruth.selector), abi.encode(MOCK_ASSERTION_ID));
+        vm.mockCall(
+            umaOracle, abi.encodeWithSelector(IOptimisticOracleV3.assertTruth.selector), abi.encode(MOCK_ASSERTION_ID)
+        );
         vm.mockCall(marketFactory, abi.encodeWithSelector(IMarketFactory.updateMarketStatus.selector), abi.encode());
 
         // block.timestamp == resolutionTimestamp should succeed (not strictly less than)
@@ -1067,7 +1083,9 @@ contract ClovOracleAdapterTest is Test {
         vm.startPrank(alice);
         bondToken.approve(address(adapter), BOND_AMOUNT);
 
-        vm.mockCall(umaOracle, abi.encodeWithSelector(IOptimisticOracleV3.assertTruth.selector), abi.encode(MOCK_ASSERTION_ID));
+        vm.mockCall(
+            umaOracle, abi.encodeWithSelector(IOptimisticOracleV3.assertTruth.selector), abi.encode(MOCK_ASSERTION_ID)
+        );
         vm.mockCall(marketFactory, abi.encodeWithSelector(IMarketFactory.updateMarketStatus.selector), abi.encode());
 
         bytes32 assertionId = adapter.assertOutcome(marketId, true, alice);

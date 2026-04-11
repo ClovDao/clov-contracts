@@ -46,11 +46,9 @@ interface IMarketFactory {
 
     event MarketCancelled(uint256 indexed marketId, address indexed cancelledBy);
 
-    function createMarket(
-        string calldata metadataURI,
-        uint256 resolutionTimestamp,
-        Category category
-    ) external returns (uint256 marketId);
+    function createMarket(string calldata metadataURI, uint256 resolutionTimestamp, Category category)
+        external
+        returns (uint256 marketId);
 
     function pauseMarketCreation() external;
 

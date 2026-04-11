@@ -9,7 +9,7 @@ import { ERC20 } from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
 
 contract MockERC20 is ERC20 {
-    constructor() ERC20("Mock USDC", "USDC") {}
+    constructor() ERC20("Mock USDC", "USDC") { }
 
     function mint(address to, uint256 amount) external {
         _mint(to, amount);
@@ -17,15 +17,9 @@ contract MockERC20 is ERC20 {
 }
 
 contract MarketFactoryHarness is MarketFactory {
-    constructor(
-        address _collateralToken,
-        address _conditionalTokens,
-        uint256 _creationDeposit
-    )
-        MarketFactory(
-            _collateralToken, _conditionalTokens, _creationDeposit
-        )
-    {}
+    constructor(address _collateralToken, address _conditionalTokens, uint256 _creationDeposit)
+        MarketFactory(_collateralToken, _conditionalTokens, _creationDeposit)
+    { }
 
     function setMarketStatus(uint256 marketId, MarketStatus status) external {
         markets[marketId].status = status;
@@ -46,14 +40,16 @@ contract MarketFactoryFuzzTest is Test {
 
     function setUp() public {
         usdc = new MockERC20();
-        factory = new MarketFactoryHarness(
-            address(usdc), conditionalTokens, CREATION_DEPOSIT
-        );
+        factory = new MarketFactoryHarness(address(usdc), conditionalTokens, CREATION_DEPOSIT);
         factory.initialize(oracleAdapter, marketResolver);
 
-        vm.mockCall(conditionalTokens, abi.encodeWithSelector(IConditionalTokens.prepareCondition.selector), abi.encode());
         vm.mockCall(
-            conditionalTokens, abi.encodeWithSelector(IConditionalTokens.getConditionId.selector), abi.encode(MOCK_CONDITION_ID)
+            conditionalTokens, abi.encodeWithSelector(IConditionalTokens.prepareCondition.selector), abi.encode()
+        );
+        vm.mockCall(
+            conditionalTokens,
+            abi.encodeWithSelector(IConditionalTokens.getConditionId.selector),
+            abi.encode(MOCK_CONDITION_ID)
         );
     }
 
@@ -279,9 +275,7 @@ contract MarketFactoryFuzzTest is Test {
             assertEq(uint8(factory.getMarket(marketId).status), uint8(to));
         } else {
             vm.prank(oracleAdapter);
-            vm.expectRevert(
-                abi.encodeWithSelector(MarketFactory.InvalidStateTransition.selector, from, to)
-            );
+            vm.expectRevert(abi.encodeWithSelector(MarketFactory.InvalidStateTransition.selector, from, to));
             factory.updateMarketStatus(marketId, to);
         }
     }
@@ -335,9 +329,7 @@ contract MarketFactoryFuzzTest is Test {
         vm.prank(oracleAdapter);
         vm.expectRevert(
             abi.encodeWithSelector(
-                MarketFactory.InvalidStateTransition.selector,
-                IMarketFactory.MarketStatus.Resolved,
-                to
+                MarketFactory.InvalidStateTransition.selector, IMarketFactory.MarketStatus.Resolved, to
             )
         );
         factory.updateMarketStatus(marketId, to);
@@ -363,9 +355,7 @@ contract MarketFactoryFuzzTest is Test {
         vm.prank(oracleAdapter);
         vm.expectRevert(
             abi.encodeWithSelector(
-                MarketFactory.InvalidStateTransition.selector,
-                IMarketFactory.MarketStatus.Cancelled,
-                to
+                MarketFactory.InvalidStateTransition.selector, IMarketFactory.MarketStatus.Cancelled, to
             )
         );
         factory.updateMarketStatus(marketId, to);

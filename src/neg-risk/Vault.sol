@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import {ERC20} from "solmate/tokens/ERC20.sol";
-import {SafeTransferLib} from "solmate/utils/SafeTransferLib.sol";
-import {ERC1155TokenReceiver} from "solmate/tokens/ERC1155.sol";
+import { ERC20 } from "solmate/tokens/ERC20.sol";
+import { SafeTransferLib } from "solmate/utils/SafeTransferLib.sol";
+import { ERC1155TokenReceiver } from "solmate/tokens/ERC1155.sol";
 
-import {Auth} from "./modules/Auth.sol";
-import {IERC1155} from "./interfaces/IConditionalTokens.sol";
+import { Auth } from "./modules/Auth.sol";
+import { IERC1155 } from "./interfaces/IConditionalTokens.sol";
 
 /// @title Vault
 /// @notice A contract for holding ERC20 and ERC1155 tokens for the NegRiskAdapter

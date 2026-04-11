@@ -72,11 +72,7 @@ contract MarketFactory is IMarketFactory, Ownable, Pausable, ReentrancyGuard {
     // Constructor
     // ──────────────────────────────────────────────
 
-    constructor(
-        address _collateralToken,
-        address _conditionalTokens,
-        uint256 _creationDeposit
-    ) Ownable(msg.sender) {
+    constructor(address _collateralToken, address _conditionalTokens, uint256 _creationDeposit) Ownable(msg.sender) {
         if (_collateralToken == address(0) || _conditionalTokens == address(0)) {
             revert ZeroAddress();
         }
@@ -113,11 +109,13 @@ contract MarketFactory is IMarketFactory, Ownable, Pausable, ReentrancyGuard {
     ///      front-run it with an identical market. This is low risk on Polygon (2 s blocks reduce
     ///      the mempool window) and economically disincentivized by the creationDeposit bond, which
     ///      the front-runner would forfeit if their copycat market is not legitimately resolved.
-    function createMarket(
-        string calldata metadataURI,
-        uint256 resolutionTimestamp,
-        Category category
-    ) external override whenNotPaused nonReentrant returns (uint256) {
+    function createMarket(string calldata metadataURI, uint256 resolutionTimestamp, Category category)
+        external
+        override
+        whenNotPaused
+        nonReentrant
+        returns (uint256)
+    {
         // 1. Validate resolution timestamp (must be at least 1 hour in the future)
         if (resolutionTimestamp <= block.timestamp + 1 hours) {
             revert InvalidResolutionTimestamp();
@@ -127,7 +125,8 @@ contract MarketFactory is IMarketFactory, Ownable, Pausable, ReentrancyGuard {
         collateralToken.safeTransferFrom(msg.sender, address(this), creationDeposit);
 
         // 3. Generate questionId (includes block.chainid and address(this) to prevent cross-chain/cross-deployment collisions)
-        bytes32 questionId = keccak256(abi.encodePacked(block.chainid, address(this), marketCount, msg.sender, block.timestamp));
+        bytes32 questionId =
+            keccak256(abi.encodePacked(block.chainid, address(this), marketCount, msg.sender, block.timestamp));
 
         // 4. Prepare condition on ConditionalTokens (binary outcome = 2)
         conditionalTokens.prepareCondition(marketResolver, questionId, 2);
@@ -156,15 +155,7 @@ contract MarketFactory is IMarketFactory, Ownable, Pausable, ReentrancyGuard {
         marketCount++;
 
         // 9. Emit event
-        emit MarketCreated(
-            marketId,
-            msg.sender,
-            conditionId,
-            questionId,
-            metadataURI,
-            resolutionTimestamp,
-            category
-        );
+        emit MarketCreated(marketId, msg.sender, conditionId, questionId, metadataURI, resolutionTimestamp, category);
 
         return marketId;
     }
@@ -272,11 +263,7 @@ contract MarketFactory is IMarketFactory, Ownable, Pausable, ReentrancyGuard {
     /// @param currentStatus The current status of the market
     /// @param newStatus The proposed new status
     /// @return valid True if the transition is allowed
-    function _isValidTransition(MarketStatus currentStatus, MarketStatus newStatus)
-        internal
-        pure
-        returns (bool valid)
-    {
+    function _isValidTransition(MarketStatus currentStatus, MarketStatus newStatus) internal pure returns (bool valid) {
         // Created → Active
         if (currentStatus == MarketStatus.Created && newStatus == MarketStatus.Active) return true;
         // Active → Resolving

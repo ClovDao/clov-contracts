@@ -61,17 +61,12 @@ contract Deploy is Script {
 
         // ── Step 1: Deploy Gnosis ConditionalTokens ──
         // These contracts are compiled with solc 0.5.x; we deploy via raw bytecode
-        address conditionalTokens = _deployFromArtifact(
-            "conditional-tokens-contracts/contracts/ConditionalTokens.sol:ConditionalTokens"
-        );
+        address conditionalTokens =
+            _deployFromArtifact("conditional-tokens-contracts/contracts/ConditionalTokens.sol:ConditionalTokens");
         console.log("ConditionalTokens:", conditionalTokens);
 
         // ── Step 2: Deploy MarketFactory (without cross-references) ──
-        MarketFactory marketFactory = new MarketFactory(
-            USDC,
-            conditionalTokens,
-            CREATION_DEPOSIT
-        );
+        MarketFactory marketFactory = new MarketFactory(USDC, conditionalTokens, CREATION_DEPOSIT);
         console.log("MarketFactory:", address(marketFactory));
 
         // ── Step 3: Deploy ClovOracleAdapter (without cross-references) ──

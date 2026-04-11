@@ -32,18 +32,10 @@ contract MarketResolverTest is Test {
         _mockGetMarket(MARKET_ID, IMarketFactory.MarketStatus.Resolving);
 
         // Mock ConditionalTokens.reportPayouts — just succeed
-        vm.mockCall(
-            conditionalTokens,
-            abi.encodeWithSelector(IConditionalTokens.reportPayouts.selector),
-            abi.encode()
-        );
+        vm.mockCall(conditionalTokens, abi.encodeWithSelector(IConditionalTokens.reportPayouts.selector), abi.encode());
 
         // Mock MarketFactory.updateMarketStatus — just succeed
-        vm.mockCall(
-            marketFactory,
-            abi.encodeWithSelector(IMarketFactory.updateMarketStatus.selector),
-            abi.encode()
-        );
+        vm.mockCall(marketFactory, abi.encodeWithSelector(IMarketFactory.updateMarketStatus.selector), abi.encode());
     }
 
     // ──────────────────────────────────────────────
@@ -63,9 +55,7 @@ contract MarketResolverTest is Test {
         });
 
         vm.mockCall(
-            marketFactory,
-            abi.encodeWithSelector(IMarketFactory.getMarket.selector, marketId),
-            abi.encode(market)
+            marketFactory, abi.encodeWithSelector(IMarketFactory.getMarket.selector, marketId), abi.encode(market)
         );
     }
 
@@ -177,9 +167,7 @@ contract MarketResolverTest is Test {
         vm.expectCall(
             marketFactory,
             abi.encodeWithSelector(
-                IMarketFactory.updateMarketStatus.selector,
-                MARKET_ID,
-                IMarketFactory.MarketStatus.Resolved
+                IMarketFactory.updateMarketStatus.selector, MARKET_ID, IMarketFactory.MarketStatus.Resolved
             )
         );
 
@@ -297,9 +285,7 @@ contract MarketResolverTest is Test {
             category: IMarketFactory.Category.Futbol
         });
         vm.mockCall(
-            marketFactory,
-            abi.encodeWithSelector(IMarketFactory.getMarket.selector, marketId1),
-            abi.encode(market1)
+            marketFactory, abi.encodeWithSelector(IMarketFactory.getMarket.selector, marketId1), abi.encode(market1)
         );
 
         // Mock market 2
@@ -314,9 +300,7 @@ contract MarketResolverTest is Test {
             category: IMarketFactory.Category.Esports
         });
         vm.mockCall(
-            marketFactory,
-            abi.encodeWithSelector(IMarketFactory.getMarket.selector, marketId2),
-            abi.encode(market2)
+            marketFactory, abi.encodeWithSelector(IMarketFactory.getMarket.selector, marketId2), abi.encode(market2)
         );
 
         // Resolve market 1 with YES

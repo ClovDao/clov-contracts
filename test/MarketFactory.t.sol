@@ -11,7 +11,7 @@ import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
 import { Pausable } from "@openzeppelin/contracts/utils/Pausable.sol";
 
 contract MockERC20 is ERC20 {
-    constructor() ERC20("Mock USDC", "USDC") {}
+    constructor() ERC20("Mock USDC", "USDC") { }
 
     function mint(address to, uint256 amount) external {
         _mint(to, amount);
@@ -20,15 +20,9 @@ contract MockERC20 is ERC20 {
 
 /// @dev Harness that exposes internal state manipulation for testing
 contract MarketFactoryHarness is MarketFactory {
-    constructor(
-        address _collateralToken,
-        address _conditionalTokens,
-        uint256 _creationDeposit
-    )
-        MarketFactory(
-            _collateralToken, _conditionalTokens, _creationDeposit
-        )
-    {}
+    constructor(address _collateralToken, address _conditionalTokens, uint256 _creationDeposit)
+        MarketFactory(_collateralToken, _conditionalTokens, _creationDeposit)
+    { }
 
     function setMarketStatus(uint256 marketId, MarketStatus status) external {
         markets[marketId].status = status;
@@ -55,13 +49,13 @@ contract MarketFactoryTest is Test {
         owner = address(this);
         usdc = new MockERC20();
 
-        factory = new MarketFactoryHarness(
-            address(usdc), conditionalTokens, CREATION_DEPOSIT
-        );
+        factory = new MarketFactoryHarness(address(usdc), conditionalTokens, CREATION_DEPOSIT);
         factory.initialize(oracleAdapter, marketResolver);
 
         // Mock ConditionalTokens.prepareCondition — just succeed
-        vm.mockCall(conditionalTokens, abi.encodeWithSelector(IConditionalTokens.prepareCondition.selector), abi.encode());
+        vm.mockCall(
+            conditionalTokens, abi.encodeWithSelector(IConditionalTokens.prepareCondition.selector), abi.encode()
+        );
 
         // Mock ConditionalTokens.getConditionId — return fixed conditionId
         vm.mockCall(
@@ -118,7 +112,8 @@ contract MarketFactoryTest is Test {
         vm.startPrank(creator);
         usdc.approve(address(factory), CREATION_DEPOSIT);
 
-        uint256 marketId = factory.createMarket("ipfs://metadata", block.timestamp + 2 hours, IMarketFactory.Category.Futbol);
+        uint256 marketId =
+            factory.createMarket("ipfs://metadata", block.timestamp + 2 hours, IMarketFactory.Category.Futbol);
         vm.stopPrank();
 
         return marketId;
@@ -158,7 +153,13 @@ contract MarketFactoryTest is Test {
         // Check that MarketCreated is emitted (check topic1 = marketId=0 and topic2 = creator=alice)
         vm.expectEmit(true, true, false, false);
         emit IMarketFactory.MarketCreated(
-            0, alice, MOCK_CONDITION_ID, bytes32(0), "ipfs://metadata", block.timestamp + 2 hours, IMarketFactory.Category.Futbol
+            0,
+            alice,
+            MOCK_CONDITION_ID,
+            bytes32(0),
+            "ipfs://metadata",
+            block.timestamp + 2 hours,
+            IMarketFactory.Category.Futbol
         );
 
         factory.createMarket("ipfs://metadata", block.timestamp + 2 hours, IMarketFactory.Category.Futbol);
@@ -302,7 +303,8 @@ contract MarketFactoryTest is Test {
         vm.startPrank(alice);
         usdc.approve(address(factory), 5e6);
 
-        uint256 marketId = factory.createMarket("ipfs://metadata", block.timestamp + 2 hours, IMarketFactory.Category.Futbol);
+        uint256 marketId =
+            factory.createMarket("ipfs://metadata", block.timestamp + 2 hours, IMarketFactory.Category.Futbol);
         vm.stopPrank();
 
         assertEq(factory.getMarket(marketId).creationDeposit, 5e6);
@@ -492,13 +494,13 @@ contract MarketFactoryTest is Test {
 
     function test_questionId_differsAcrossFactoryInstances() public {
         // Deploy a second factory with identical constructor args
-        MarketFactoryHarness factory2 = new MarketFactoryHarness(
-            address(usdc), conditionalTokens, CREATION_DEPOSIT
-        );
+        MarketFactoryHarness factory2 = new MarketFactoryHarness(address(usdc), conditionalTokens, CREATION_DEPOSIT);
         factory2.initialize(oracleAdapter, marketResolver);
 
         // Mock calls for factory2 as well
-        vm.mockCall(conditionalTokens, abi.encodeWithSelector(IConditionalTokens.prepareCondition.selector), abi.encode());
+        vm.mockCall(
+            conditionalTokens, abi.encodeWithSelector(IConditionalTokens.prepareCondition.selector), abi.encode()
+        );
         vm.mockCall(
             conditionalTokens,
             abi.encodeWithSelector(IConditionalTokens.getConditionId.selector),
@@ -512,7 +514,8 @@ contract MarketFactoryTest is Test {
         usdc.approve(address(factory2), CREATION_DEPOSIT);
 
         uint256 id1 = factory.createMarket("ipfs://metadata", block.timestamp + 2 hours, IMarketFactory.Category.Futbol);
-        uint256 id2 = factory2.createMarket("ipfs://metadata", block.timestamp + 2 hours, IMarketFactory.Category.Futbol);
+        uint256 id2 =
+            factory2.createMarket("ipfs://metadata", block.timestamp + 2 hours, IMarketFactory.Category.Futbol);
         vm.stopPrank();
 
         // questionIds MUST differ because address(this) differs between factories
@@ -531,10 +534,12 @@ contract MarketFactoryTest is Test {
         vm.startPrank(alice);
         usdc.approve(address(factory), CREATION_DEPOSIT);
 
-        uint256 marketId = factory.createMarket("ipfs://metadata", block.timestamp + 2 hours, IMarketFactory.Category.Futbol);
+        uint256 marketId =
+            factory.createMarket("ipfs://metadata", block.timestamp + 2 hours, IMarketFactory.Category.Futbol);
         vm.stopPrank();
 
-        bytes32 expectedQuestionId = keccak256(abi.encodePacked(block.chainid, address(factory), uint256(0), alice, block.timestamp));
+        bytes32 expectedQuestionId =
+            keccak256(abi.encodePacked(block.chainid, address(factory), uint256(0), alice, block.timestamp));
         assertEq(factory.getMarket(marketId).questionId, expectedQuestionId);
     }
 

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.15;
 
-import {CTHelpers} from "./CTHelpers.sol";
+import { CTHelpers } from "./CTHelpers.sol";
 
 /// @title Helpers
 /// @notice Helper functions for the NegRiskAdapter

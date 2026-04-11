@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.15;
 
-import {MarketData, MarketDataLib} from "../types/MarketData.sol";
-import {NegRiskIdLib} from "../libraries/NegRiskIdLib.sol";
+import { MarketData, MarketDataLib } from "../types/MarketData.sol";
+import { NegRiskIdLib } from "../libraries/NegRiskIdLib.sol";
 
 interface IMarketStateManagerEE {
     error IndexOutOfBounds();

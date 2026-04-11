@@ -22,10 +22,7 @@ interface IConditionalTokens {
         view
         returns (bytes32);
 
-    function getPositionId(IERC20 collateralToken, bytes32 collectionId)
-        external
-        pure
-        returns (uint256);
+    function getPositionId(IERC20 collateralToken, bytes32 collectionId) external pure returns (uint256);
 
     // ── ERC1155 subset (used by Vault for balance tracking) ──
 
