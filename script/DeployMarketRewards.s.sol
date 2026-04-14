@@ -3,6 +3,7 @@ pragma solidity ^0.8.24;
 
 import { Script, console } from "forge-std/Script.sol";
 import { MarketRewards } from "../src/MarketRewards.sol";
+
 /// @title DeployMarketRewards — deploy MarketRewards to Polygon Amoy
 /// @dev Usage: forge script script/DeployMarketRewards.s.sol --rpc-url amoy --broadcast --verify
 contract DeployMarketRewards is Script {
