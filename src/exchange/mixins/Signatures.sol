@@ -10,10 +10,19 @@ import { ISignatures } from "../interfaces/ISignatures.sol";
 
 import { SafeFactoryHelper } from "./SafeFactoryHelper.sol";
 
+interface IProxyWalletFactory {
+    function getProxyAddress(address owner) external view returns (address);
+}
+
 /// @title Signatures
 /// @notice Maintains logic that defines the various signature types and validates them
 abstract contract Signatures is ISignatures, SafeFactoryHelper {
-    constructor(address _safeFactory) SafeFactoryHelper(_safeFactory) { }
+    /// @notice Per-user Clov Proxy Wallet factory used to recompute `maker` for POLY_PROXY signatures.
+    address public immutable proxyFactory;
+
+    constructor(address _safeFactory, address _proxyFactory) SafeFactoryHelper(_safeFactory) {
+        proxyFactory = _proxyFactory;
+    }
 
     /// @notice Validates the signature of an order
     /// @param orderHash - The hash of the order
@@ -39,6 +48,8 @@ abstract contract Signatures is ISignatures, SafeFactoryHelper {
     ) internal view returns (bool) {
         if (signatureType == SignatureType.EOA) {
             return verifyEOASignature(signer, associated, structHash, signature);
+        } else if (signatureType == SignatureType.POLY_PROXY) {
+            return verifyPolyProxySignature(signer, associated, structHash, signature);
         } else if (signatureType == SignatureType.GNOSIS_SAFE) {
             return verifySafeSignature(signer, associated, structHash, signature);
         } else if (signatureType == SignatureType.ERC1271) {
@@ -46,6 +57,23 @@ abstract contract Signatures is ISignatures, SafeFactoryHelper {
         } else {
             revert InvalidSignature();
         }
+    }
+
+    /// @notice Verifies a signature produced by the EOA owner of a Clov Proxy Wallet.
+    /// @dev    The `associated` address is the proxy wallet that will act as the maker. We ECDSA-recover
+    ///         the signer from the order hash and then recompute the CREATE2 address of that signer's
+    ///         proxy wallet; the two must match. If they do not, the order is invalid.
+    /// @param signer        Address of the EOA that signed the order.
+    /// @param proxyAddress  Address associated with the signer (i.e. the Proxy Wallet acting as maker).
+    /// @param structHash    Hash of the order struct being verified.
+    /// @param signature     The ECDSA signature to verify.
+    function verifyPolyProxySignature(address signer, address proxyAddress, bytes32 structHash, bytes memory signature)
+        internal
+        view
+        returns (bool)
+    {
+        return verifyECDSASignature(signer, structHash, signature)
+            && IProxyWalletFactory(proxyFactory).getProxyAddress(signer) == proxyAddress;
     }
 
     /// @notice Verifies an EOA ECDSA signature

@@ -8,8 +8,8 @@ import { IConditionalTokens } from "./interfaces/IConditionalTokens.sol";
 /// @notice A slightly modified version of CTFExchange
 /// @notice with added approvals for the NegRiskAdapter
 contract NegRiskCtfExchange is CTFExchange {
-    constructor(address _collateral, address _ctf, address _negRiskAdapter, address _safeFactory)
-        CTFExchange(_collateral, _negRiskAdapter, _safeFactory)
+    constructor(address _collateral, address _ctf, address _negRiskAdapter, address _safeFactory, address _proxyFactory)
+        CTFExchange(_collateral, _negRiskAdapter, _safeFactory, _proxyFactory)
     {
         IConditionalTokens(_ctf).setApprovalForAll(_negRiskAdapter, true);
         IConditionalTokens(_ctf).setApprovalForAll(address(this), true);

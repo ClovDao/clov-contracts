@@ -31,9 +31,9 @@ contract CTFExchange is
     Signatures,
     Trading
 {
-    constructor(address _collateral, address _ctf, address _safeFactory)
+    constructor(address _collateral, address _ctf, address _safeFactory, address _proxyFactory)
         Assets(_collateral, _ctf)
-        Signatures(_safeFactory)
+        Signatures(_safeFactory, _proxyFactory)
     { }
 
     /*//////////////////////////////////////////////////////////////

@@ -11,6 +11,8 @@ import { NegRiskOperator } from "../src/neg-risk/NegRiskOperator.sol";
 import { NegRiskCtfExchange } from "../src/neg-risk/NegRiskCtfExchange.sol";
 import { ClovNegRiskOracle } from "../src/neg-risk/ClovNegRiskOracle.sol";
 import { Vault } from "../src/neg-risk/Vault.sol";
+import { ProxyWalletImplementation } from "../src/ProxyWalletImplementation.sol";
+import { ProxyWalletFactory } from "../src/ProxyWalletFactory.sol";
 
 /// @title Deploy — Clov Protocol full deployment to Polygon Amoy
 /// @notice Deploys Gnosis ConditionalTokens (not available on Amoy),
@@ -96,8 +98,14 @@ contract Deploy is Script {
         Vault vault = new Vault();
         console.log("Vault:", address(vault));
 
+        // ── Step 6b: Deploy ProxyWallet implementation + factory ──
+        ProxyWalletImplementation proxyImpl = new ProxyWalletImplementation();
+        console.log("ProxyWalletImplementation:", address(proxyImpl));
+        ProxyWalletFactory proxyFactory = new ProxyWalletFactory(address(proxyImpl));
+        console.log("ProxyWalletFactory:", address(proxyFactory));
+
         // ── Step 7: Deploy CTFExchange ──
-        CTFExchange ctfExchange = new CTFExchange(USDC, conditionalTokens, SAFE_FACTORY);
+        CTFExchange ctfExchange = new CTFExchange(USDC, conditionalTokens, SAFE_FACTORY, address(proxyFactory));
         console.log("CTFExchange:", address(ctfExchange));
 
         // ── Step 8: Deploy NegRiskAdapter ──
@@ -113,8 +121,9 @@ contract Deploy is Script {
         console.log("NegRiskOperator:", address(negRiskOperator));
 
         // ── Step 10: Deploy NegRiskCtfExchange ──
-        NegRiskCtfExchange negRiskCtfExchange =
-            new NegRiskCtfExchange(USDC, conditionalTokens, address(negRiskAdapter), SAFE_FACTORY);
+        NegRiskCtfExchange negRiskCtfExchange = new NegRiskCtfExchange(
+            USDC, conditionalTokens, address(negRiskAdapter), SAFE_FACTORY, address(proxyFactory)
+        );
         console.log("NegRiskCtfExchange:", address(negRiskCtfExchange));
 
         // ── Step 11: Deploy ClovNegRiskOracle ──
