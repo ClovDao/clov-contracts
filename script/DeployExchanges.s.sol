@@ -4,6 +4,7 @@ pragma solidity ^0.8.24;
 import { Script, console } from "forge-std/Script.sol";
 import { CTFExchange } from "../src/exchange/CTFExchange.sol";
 import { NegRiskCtfExchange } from "../src/neg-risk/NegRiskCtfExchange.sol";
+import { NegRiskAdapter } from "../src/neg-risk/NegRiskAdapter.sol";
 
 /// @title DeployExchanges — surgical redeploy of CTFExchange + NegRiskCtfExchange on Amoy
 /// @notice The exchange contracts originally deployed in Phase C predate the
@@ -54,6 +55,12 @@ contract DeployExchanges is Script {
         // since constructor already does it, but kept for parity in case auth changes.
         // ctfExchange.addOperator(deployer);
         // negRiskCtfExchange.addOperator(deployer);
+
+        // NegRiskAdapter.safeTransferFrom is onlyAdmin on the adapter's own Auth
+        // module. The exchange MUST be admin there so _transferCTF (used when the
+        // exchange moves minted positions back to makers) succeeds. Without this
+        // any matchOrders MINT path reverts with NotAdmin().
+        NegRiskAdapter(NEG_RISK_ADAPTER).addAdmin(address(negRiskCtfExchange));
 
         vm.stopBroadcast();
 
