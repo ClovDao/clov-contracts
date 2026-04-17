@@ -30,7 +30,7 @@ struct Order {
     uint256 feeRateBps;
     /// @notice The side of the order: BUY or SELL
     Side side;
-    /// @notice Signature type used by the Order: EOA, _RESERVED, or GNOSIS_SAFE
+    /// @notice Signature type used by the Order: EOA, POLY_PROXY, GNOSIS_SAFE or ERC1271
     SignatureType signatureType;
     /// @notice The order signature
     bytes signature;
@@ -39,8 +39,8 @@ struct Order {
 enum SignatureType {
     // 0: ECDSA EIP712 signatures signed by EOAs
     EOA,
-    // 1: Reserved (unused)
-    _RESERVED,
+    // 1: EIP712 signatures signed by EOAs that own per-user Clov Proxy Wallets (EIP-1167 clones)
+    POLY_PROXY,
     // 2: EIP712 signatures signed by EOAs that own Gnosis Safes
     GNOSIS_SAFE,
     // 3: EIP1271 signatures signed by smart contracts
