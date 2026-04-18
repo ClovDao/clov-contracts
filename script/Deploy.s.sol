@@ -29,7 +29,7 @@ contract Deploy is Script {
     address constant SAFE_FACTORY = 0xa6B71E26C5e0845f74c812102Ca7114b6a896AB2;
 
     // ── Configuration ──
-    uint256 constant CREATION_DEPOSIT = 5e6; // 5 USDC (6 decimals)
+    uint256 constant CREATION_DEPOSIT = 1e6; // 1 USDC (6 decimals) — matches MIN_CREATION_DEPOSIT
     uint256 constant BOND_AMOUNT = 1e6; // 1 USDC bond for UMA assertions
     uint64 constant ASSERTION_LIVENESS = 7200; // 2 hours dispute window
 
