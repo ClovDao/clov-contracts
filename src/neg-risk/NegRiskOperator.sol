@@ -7,6 +7,13 @@ import { IAuthEE } from "./modules/interfaces/IAuth.sol";
 
 import { NegRiskAdapter } from "./NegRiskAdapter.sol";
 
+/// @notice Subset of the Clov NegRisk oracle surface that the Operator needs to call
+///         when preparing Community-tier markets and questions.
+interface INegRiskOracleMutator {
+    function setPermissionlessAssertion(bytes32 requestId) external;
+    function clearPermissionlessAssertion(bytes32 requestId) external;
+}
+
 /// @title INegRiskOperatorEE
 /// @notice NegRiskOperator Errors and Events
 interface INegRiskOperatorEE is IAuthEE {
@@ -23,6 +30,9 @@ interface INegRiskOperatorEE is IAuthEE {
     error InvalidRequestId();
     error QuestionAlreadyReported();
 
+    /// @dev Community preparation requires the oracle to be initialized first so we can flag questions.
+    error OracleNotInitialized();
+
     event MarketPrepared(bytes32 indexed marketId, uint256 feeBips, bytes data);
     event QuestionPrepared(
         bytes32 indexed marketId,
@@ -36,6 +46,14 @@ interface INegRiskOperatorEE is IAuthEE {
     event QuestionReported(bytes32 indexed questionId, bytes32 requestId, bool result);
     event QuestionResolved(bytes32 indexed questionId, bool result);
     event QuestionEmergencyResolved(bytes32 indexed questionId, bool result);
+
+    /// @notice Emitted when a Community-tier NegRisk market is prepared permissionlessly.
+    event CommunityMarketPrepared(bytes32 indexed marketId, address indexed creator, uint256 feeBips, bytes data);
+
+    /// @notice Emitted when a Community-tier NegRisk question is prepared permissionlessly.
+    event CommunityQuestionPrepared(
+        bytes32 indexed marketId, bytes32 indexed questionId, bytes32 indexed requestId, address creator
+    );
 }
 
 /// @title NegRiskOperator
@@ -127,6 +145,73 @@ contract NegRiskOperator is INegRiskOperatorEE, Auth {
 
         emit QuestionPrepared(_marketId, questionId, _requestId, NegRiskIdLib.getQuestionIndex(questionId), _data);
         return questionId;
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                     COMMUNITY MARKETS (H.2.12)
+    //////////////////////////////////////////////////////////////*/
+
+    /// @notice Permissionless variant of prepareMarket for Community-tier NegRisk markets.
+    /// @dev No auth modifier. Deposits, challenge windows and creator-fee accounting live on
+    ///      the binary `MarketFactory`; NegRisk community metadata is tracked via the emitted
+    ///      `CommunityMarketPrepared` event and the factory orchestration added in H.2.13.
+    /// @param _feeBips  - market fee rate, out of 10_000
+    /// @param _data     - market metadata passed through to the NegRiskAdapter
+    /// @return marketId - the resulting NegRisk market id
+    function prepareCommunityMarket(uint256 _feeBips, bytes calldata _data) external returns (bytes32) {
+        bytes32 marketId = nrAdapter.prepareMarket(_feeBips, _data);
+
+        emit CommunityMarketPrepared(marketId, msg.sender, _feeBips, _data);
+        emit MarketPrepared(marketId, _feeBips, _data);
+
+        return marketId;
+    }
+
+    /// @notice Permissionless variant of prepareQuestion for Community-tier NegRisk markets.
+    ///         Flags the question's `requestId` as permissionless-assertable on the oracle so
+    ///         outcome assertion does not require asserter allowlisting.
+    /// @dev Reverts if the oracle has not been initialized — the permissionless flag relies
+    ///      on the oracle being callable. See `setOracle`.
+    /// @param _marketId   - the NegRisk market in which to prepare the question
+    /// @param _data       - question metadata passed through to the NegRiskAdapter
+    /// @param _requestId  - the oracle request id to associate with this question
+    /// @return questionId - the resulting question id
+    function prepareCommunityQuestion(bytes32 _marketId, bytes calldata _data, bytes32 _requestId)
+        external
+        returns (bytes32)
+    {
+        if (oracle == address(0)) revert OracleNotInitialized();
+        if (questionIds[_requestId] != bytes32(0)) {
+            revert QuestionWithRequestIdAlreadyPrepared();
+        }
+
+        bytes32 questionId = nrAdapter.prepareQuestion(_marketId, _data);
+        questionIds[_requestId] = questionId;
+
+        INegRiskOracleMutator(oracle).setPermissionlessAssertion(_requestId);
+
+        emit CommunityQuestionPrepared(_marketId, questionId, _requestId, msg.sender);
+        emit QuestionPrepared(_marketId, questionId, _requestId, NegRiskIdLib.getQuestionIndex(questionId), _data);
+
+        return questionId;
+    }
+
+    /// @notice Clear the permissionless-assertable flag on the oracle for a Community question.
+    /// @dev Admin-gated. Called by the registry on challenge or cancel.
+    /// @param _requestId - the oracle request id whose flag should be cleared
+    function clearCommunityPermissionlessAssertion(bytes32 _requestId) external onlyAdmin {
+        if (oracle == address(0)) revert OracleNotInitialized();
+        INegRiskOracleMutator(oracle).clearPermissionlessAssertion(_requestId);
+    }
+
+    /// @notice Re-enable the permissionless-assertable flag on the oracle for a Community
+    ///         question. Called by the registry when a challenge is rejected so outcome
+    ///         resolution can resume through the permissionless path.
+    /// @dev Admin-gated — the registry must be an admin.
+    /// @param _requestId - the oracle request id whose flag should be set
+    function setCommunityPermissionlessAssertion(bytes32 _requestId) external onlyAdmin {
+        if (oracle == address(0)) revert OracleNotInitialized();
+        INegRiskOracleMutator(oracle).setPermissionlessAssertion(_requestId);
     }
 
     /*//////////////////////////////////////////////////////////////

@@ -61,6 +61,7 @@ contract E2EClovV2 is Test {
     // ──────────────────────────────────────────────
 
     address public conditionalTokens = makeAddr("conditionalTokens");
+    address public ctfExchange = makeAddr("ctfExchange");
     address public umaOracle = makeAddr("umaOracle");
 
     // ──────────────────────────────────────────────
@@ -81,6 +82,7 @@ contract E2EClovV2 is Test {
 
     uint256 public constant CREATION_DEPOSIT = 10e6; // 10 USDC
     uint256 public constant BOND_AMOUNT = 500e6; // 500 USDC
+    uint256 public constant CHALLENGE_BOND_AMOUNT = 500e6;
     uint64 public constant ASSERTION_LIVENESS = 7200; // 2 hours
     bytes32 public constant DEFAULT_IDENTIFIER = keccak256("ASSERT_TRUTH");
     bytes32 public constant MOCK_CONDITION_ID = keccak256("e2e-condition-0");
@@ -121,9 +123,21 @@ contract E2EClovV2 is Test {
             umaOracle, abi.encodeWithSelector(IOptimisticOracleV3.assertTruth.selector), abi.encode(MOCK_ASSERTION_ID)
         );
 
+        // ── Mock CTFExchange.registerToken + CT position helpers ──
+        vm.mockCall(ctfExchange, abi.encodeWithSignature("registerToken(uint256,uint256,bytes32)"), abi.encode());
+        vm.mockCall(
+            conditionalTokens,
+            abi.encodeWithSelector(IConditionalTokens.getCollectionId.selector),
+            abi.encode(bytes32(uint256(0xC0)))
+        );
+        vm.mockCall(
+            conditionalTokens, abi.encodeWithSelector(IConditionalTokens.getPositionId.selector), abi.encode(uint256(1))
+        );
+
         // ── Deploy real Clov contracts ──
-        factory = new MarketFactory(address(usdc), conditionalTokens, CREATION_DEPOSIT);
-        oracleAdapter = new ClovOracleAdapter(umaOracle, address(usdc), BOND_AMOUNT, ASSERTION_LIVENESS);
+        factory = new MarketFactory(address(usdc), conditionalTokens, ctfExchange, CREATION_DEPOSIT);
+        oracleAdapter =
+            new ClovOracleAdapter(umaOracle, address(usdc), BOND_AMOUNT, CHALLENGE_BOND_AMOUNT, ASSERTION_LIVENESS);
         resolver = new MarketResolver(conditionalTokens);
         rewards = new MarketRewards(address(usdc), deployer);
 

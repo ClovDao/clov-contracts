@@ -22,9 +22,13 @@ contract MockERC20 is ERC20 {
 
 /// @dev Harness that exposes internal _uint256ToString for direct testing
 contract ClovOracleAdapterHarness is ClovOracleAdapter {
-    constructor(address _umaOracle, address _bondToken, uint256 _bondAmount, uint64 _assertionLiveness)
-        ClovOracleAdapter(_umaOracle, _bondToken, _bondAmount, _assertionLiveness)
-    { }
+    constructor(
+        address _umaOracle,
+        address _bondToken,
+        uint256 _bondAmount,
+        uint256 _challengeBondAmount,
+        uint64 _assertionLiveness
+    ) ClovOracleAdapter(_umaOracle, _bondToken, _bondAmount, _challengeBondAmount, _assertionLiveness) { }
 
     function exposed_uint256ToString(uint256 value) external pure returns (string memory) {
         return _uint256ToString(value);
@@ -44,6 +48,7 @@ contract ClovOracleAdapterTest is Test {
     address public marketResolver = makeAddr("marketResolver");
 
     uint256 public constant BOND_AMOUNT = 1000e6; // 1000 USDC
+    uint256 public constant CHALLENGE_BOND_AMOUNT = 500e6; // 500 USDC
     uint64 public constant ASSERTION_LIVENESS = 7200; // 2 hours
     bytes32 public constant DEFAULT_IDENTIFIER = keccak256("ASSERT_TRUTH");
     bytes32 public constant MOCK_ASSERTION_ID = keccak256("mockAssertionId");
@@ -59,7 +64,9 @@ contract ClovOracleAdapterTest is Test {
             abi.encode(DEFAULT_IDENTIFIER)
         );
 
-        adapter = new ClovOracleAdapterHarness(umaOracle, address(bondToken), BOND_AMOUNT, ASSERTION_LIVENESS);
+        adapter = new ClovOracleAdapterHarness(
+            umaOracle, address(bondToken), BOND_AMOUNT, CHALLENGE_BOND_AMOUNT, ASSERTION_LIVENESS
+        );
         adapter.initialize(marketFactory, marketResolver);
     }
 
@@ -127,7 +134,9 @@ contract ClovOracleAdapterTest is Test {
 
     function test_constructor_revertsOnZeroAddress_umaOracle() public {
         vm.expectRevert(ClovOracleAdapter.ZeroAddress.selector);
-        new ClovOracleAdapterHarness(address(0), address(bondToken), BOND_AMOUNT, ASSERTION_LIVENESS);
+        new ClovOracleAdapterHarness(
+            address(0), address(bondToken), BOND_AMOUNT, CHALLENGE_BOND_AMOUNT, ASSERTION_LIVENESS
+        );
     }
 
     function test_constructor_revertsOnZeroAddress_bondToken() public {
@@ -140,7 +149,7 @@ contract ClovOracleAdapterTest is Test {
         );
 
         vm.expectRevert(ClovOracleAdapter.ZeroAddress.selector);
-        new ClovOracleAdapterHarness(newUma, address(0), BOND_AMOUNT, ASSERTION_LIVENESS);
+        new ClovOracleAdapterHarness(newUma, address(0), BOND_AMOUNT, CHALLENGE_BOND_AMOUNT, ASSERTION_LIVENESS);
     }
 
     function test_initialize_revertsOnZeroAddress_marketFactory() public {
@@ -151,8 +160,9 @@ contract ClovOracleAdapterTest is Test {
             abi.encode(DEFAULT_IDENTIFIER)
         );
 
-        ClovOracleAdapterHarness a =
-            new ClovOracleAdapterHarness(newUma, address(bondToken), BOND_AMOUNT, ASSERTION_LIVENESS);
+        ClovOracleAdapterHarness a = new ClovOracleAdapterHarness(
+            newUma, address(bondToken), BOND_AMOUNT, CHALLENGE_BOND_AMOUNT, ASSERTION_LIVENESS
+        );
         vm.expectRevert(ClovOracleAdapter.ZeroAddress.selector);
         a.initialize(address(0), marketResolver);
     }
@@ -165,8 +175,9 @@ contract ClovOracleAdapterTest is Test {
             abi.encode(DEFAULT_IDENTIFIER)
         );
 
-        ClovOracleAdapterHarness a =
-            new ClovOracleAdapterHarness(newUma, address(bondToken), BOND_AMOUNT, ASSERTION_LIVENESS);
+        ClovOracleAdapterHarness a = new ClovOracleAdapterHarness(
+            newUma, address(bondToken), BOND_AMOUNT, CHALLENGE_BOND_AMOUNT, ASSERTION_LIVENESS
+        );
         vm.expectRevert(ClovOracleAdapter.ZeroAddress.selector);
         a.initialize(marketFactory, address(0));
     }
@@ -1145,5 +1156,94 @@ contract ClovOracleAdapterTest is Test {
     function test_removeAsserter_revertsOnZeroAddress() public {
         vm.expectRevert(ClovOracleAdapter.ZeroAddress.selector);
         adapter.removeAsserter(address(0));
+    }
+
+    // ──────────────────────────────────────────────
+    // H.2.7 — Permissionless assertion flag
+    // ──────────────────────────────────────────────
+
+    function test_setPermissionlessAssertion_onlyMarketFactory() public {
+        vm.expectRevert(abi.encodeWithSelector(ClovOracleAdapter.OnlyMarketFactory.selector, address(this)));
+        adapter.setPermissionlessAssertion(42);
+    }
+
+    function test_setPermissionlessAssertion_happyPath() public {
+        assertFalse(adapter.isPermissionlessAssertion(42));
+
+        vm.prank(marketFactory);
+        vm.expectEmit(true, false, false, false);
+        emit IClovOracleAdapter.PermissionlessAssertionSet(42);
+        adapter.setPermissionlessAssertion(42);
+
+        assertTrue(adapter.isPermissionlessAssertion(42));
+    }
+
+    function test_clearPermissionlessAssertion_onlyMarketFactory() public {
+        vm.prank(marketFactory);
+        adapter.setPermissionlessAssertion(42);
+
+        vm.expectRevert(abi.encodeWithSelector(ClovOracleAdapter.OnlyMarketFactory.selector, address(this)));
+        adapter.clearPermissionlessAssertion(42);
+    }
+
+    function test_clearPermissionlessAssertion_happyPath() public {
+        vm.prank(marketFactory);
+        adapter.setPermissionlessAssertion(42);
+
+        vm.prank(marketFactory);
+        vm.expectEmit(true, false, false, false);
+        emit IClovOracleAdapter.PermissionlessAssertionCleared(42);
+        adapter.clearPermissionlessAssertion(42);
+
+        assertFalse(adapter.isPermissionlessAssertion(42));
+    }
+
+    function test_assertOutcome_bypassesAllowlistWhenFlagSet() public {
+        uint256 marketId = 7;
+        _mockActiveMarket(marketId);
+
+        // alice is NOT in allowlist; without the flag this would revert.
+        assertFalse(adapter.allowedAsserters(alice));
+
+        vm.prank(marketFactory);
+        adapter.setPermissionlessAssertion(marketId);
+
+        vm.mockCall(
+            umaOracle, abi.encodeWithSelector(IOptimisticOracleV3.assertTruth.selector), abi.encode(MOCK_ASSERTION_ID)
+        );
+        bondToken.mint(alice, BOND_AMOUNT);
+        vm.startPrank(alice);
+        bondToken.approve(address(adapter), BOND_AMOUNT);
+        bytes32 assertionId = adapter.assertOutcome(marketId, true, alice);
+        vm.stopPrank();
+
+        assertEq(assertionId, MOCK_ASSERTION_ID);
+    }
+
+    function test_assertOutcome_revertsForUnauthorizedWhenFlagCleared() public {
+        uint256 marketId = 8;
+        _mockActiveMarket(marketId);
+
+        vm.prank(marketFactory);
+        adapter.setPermissionlessAssertion(marketId);
+        vm.prank(marketFactory);
+        adapter.clearPermissionlessAssertion(marketId);
+
+        bondToken.mint(alice, BOND_AMOUNT);
+        vm.startPrank(alice);
+        bondToken.approve(address(adapter), BOND_AMOUNT);
+        vm.expectRevert(abi.encodeWithSelector(ClovOracleAdapter.UnauthorizedAsserter.selector, alice));
+        adapter.assertOutcome(marketId, true, alice);
+        vm.stopPrank();
+    }
+
+    function test_permissionlessAssertion_isPerMarket() public {
+        vm.prank(marketFactory);
+        adapter.setPermissionlessAssertion(1);
+
+        // Other markets are unaffected.
+        assertTrue(adapter.isPermissionlessAssertion(1));
+        assertFalse(adapter.isPermissionlessAssertion(2));
+        assertFalse(adapter.isPermissionlessAssertion(0));
     }
 }
