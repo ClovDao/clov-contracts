@@ -266,7 +266,7 @@ contract NegRiskCommunityRegistryInvariants is StdInvariant, Test {
         }
     }
 
-    /// @notice Registry USDC balance covers all live obligations (H.3.5: challenger bonds live
+    /// @notice Registry USDC balance covers all live obligations (challenger bonds live
     ///         on UMA, so they are not part of registry obligations).
     function invariant_registrySolvency() public view {
         uint256 count = handler.getMarketCount();

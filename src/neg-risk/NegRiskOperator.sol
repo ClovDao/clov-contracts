@@ -148,13 +148,13 @@ contract NegRiskOperator is INegRiskOperatorEE, Auth {
     }
 
     /*//////////////////////////////////////////////////////////////
-                     COMMUNITY MARKETS (H.2.12)
+                     COMMUNITY MARKETS
     //////////////////////////////////////////////////////////////*/
 
     /// @notice Permissionless variant of prepareMarket for Community-tier NegRisk markets.
     /// @dev No auth modifier. Deposits, challenge windows and creator-fee accounting live on
     ///      the binary `MarketFactory`; NegRisk community metadata is tracked via the emitted
-    ///      `CommunityMarketPrepared` event and the factory orchestration added in H.2.13.
+    ///      `CommunityMarketPrepared` event and the factory orchestration added later.
     /// @param _feeBips  - market fee rate, out of 10_000
     /// @param _data     - market metadata passed through to the NegRiskAdapter
     /// @return marketId - the resulting NegRisk market id

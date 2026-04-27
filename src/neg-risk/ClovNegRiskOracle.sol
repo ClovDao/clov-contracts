@@ -23,7 +23,7 @@ interface INegRiskCommunityRegistryCallback {
 /// @title ClovNegRiskOracle
 /// @notice Bridges UMA OOV3 with NegRiskOperator for categorical market resolution
 /// @dev Each NegRisk question gets its own UMA assertion for outcome resolution. Community
-///      markets have a *single* challenge assertion at the nrMarketId level (H.3.5): one
+///      markets have a *single* challenge assertion at the nrMarketId level: one
 ///      "this whole market is invalid" dispute, not one per question.
 contract ClovNegRiskOracle is Ownable {
     using SafeERC20 for IERC20;
@@ -109,7 +109,7 @@ contract ClovNegRiskOracle is Ownable {
     ///         check so Community-tier NegRisk questions can be resolved permissionlessly.
     mapping(bytes32 => bool) internal _permissionlessAssertion;
 
-    /// @notice assertionId => nrMarketId for Community-market challenge assertions (H.3.5).
+    /// @notice assertionId => nrMarketId for Community-market challenge assertions.
     mapping(bytes32 => bytes32) public marketChallengeAssertions;
 
     /// @notice assertionId => true when the assertion is a challenge (disambiguates zero).
@@ -198,7 +198,7 @@ contract ClovNegRiskOracle is Ownable {
     }
 
     // ──────────────────────────────────────────────
-    // Assert Market Challenge (H.3.5)
+    // Assert Market Challenge
     // ──────────────────────────────────────────────
 
     /// @notice Registry-only: open a UMA challenge assertion at the nrMarketId level.
@@ -334,7 +334,7 @@ contract ClovNegRiskOracle is Ownable {
     }
 
     // ──────────────────────────────────────────────
-    // Community — Permissionless Assertion (H.2.11)
+    // Community — Permissionless Assertion
     // ──────────────────────────────────────────────
 
     /// @notice Flag a NegRisk question as permissionless-assertable. When set, any

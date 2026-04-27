@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.24;
+pragma solidity 0.8.24;
 
 import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
 import { Pausable } from "@openzeppelin/contracts/utils/Pausable.sol";
@@ -16,7 +16,7 @@ import { IMarketResolver } from "./interfaces/IMarketResolver.sol";
 ///         and Community-market challenge disputes.
 /// @dev Manages two assertion lifecycles:
 ///      - **Outcome** assertions: `assertOutcome` → UMA → `assertionResolvedCallback` → resolver.
-///      - **Challenge** assertions (H.3.5): `assertMarketChallenge` (factory-only) → UMA →
+///      - **Challenge** assertions: `assertMarketChallenge` (factory-only) → UMA →
 ///        callback routes into `MarketFactory.onChallengeUpheld / onChallengeRejected`.
 contract ClovOracleAdapter is IClovOracleAdapter, Ownable, Pausable, ReentrancyGuard {
     using SafeERC20 for IERC20;
@@ -75,7 +75,7 @@ contract ClovOracleAdapter is IClovOracleAdapter, Ownable, Pausable, ReentrancyG
     /// @notice Bond amount required for UMA outcome assertions
     uint256 public immutable bondAmount;
 
-    /// @notice Bond amount required for UMA challenge assertions (H.3.5). Set at deploy time
+    /// @notice Bond amount required for UMA challenge assertions. Set at deploy time
     ///         and held by UMA, not the factory.
     uint256 public immutable challengeBondAmount;
 
@@ -232,7 +232,7 @@ contract ClovOracleAdapter is IClovOracleAdapter, Ownable, Pausable, ReentrancyG
     }
 
     // ──────────────────────────────────────────────
-    // Assert Challenge (H.3.5)
+    // Assert Challenge
     // ──────────────────────────────────────────────
 
     /// @inheritdoc IClovOracleAdapter

@@ -65,7 +65,7 @@ contract MarketFactoryFuzzTest is Test {
         // Mock exchange registerToken — factory calls it at create/activate
         vm.mockCall(ctfExchange, abi.encodeWithSignature("registerToken(uint256,uint256,bytes32)"), abi.encode());
 
-        // H.2.8: mock permissionless-assertion setters on the oracle adapter EOA so
+        // mock permissionless-assertion setters on the oracle adapter EOA so
         // createCommunityMarket / challengeMarket / cancelMarket can call through.
         vm.mockCall(
             oracleAdapter, abi.encodeWithSelector(IClovOracleAdapter.setPermissionlessAssertion.selector), abi.encode()
@@ -262,7 +262,7 @@ contract MarketFactoryFuzzTest is Test {
     {
         // Created → Active
         if (from == IMarketFactory.MarketStatus.Created && to == IMarketFactory.MarketStatus.Active) return true;
-        // Created → Cancelled (Community-tier cancel before activation — H.2.7)
+        // Created → Cancelled (Community-tier cancel before activation)
         if (from == IMarketFactory.MarketStatus.Created && to == IMarketFactory.MarketStatus.Cancelled) return true;
         // Active → Resolving
         if (from == IMarketFactory.MarketStatus.Active && to == IMarketFactory.MarketStatus.Resolving) return true;
@@ -367,7 +367,7 @@ contract MarketFactoryFuzzTest is Test {
     }
 
     // ──────────────────────────────────────────────
-    // H.2.8 — Community Markets fuzz
+    // Community Markets fuzz
     // ──────────────────────────────────────────────
 
     function _fundAndApprove(address who, uint256 amount) internal {

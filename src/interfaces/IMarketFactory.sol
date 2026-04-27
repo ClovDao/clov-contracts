@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.24;
+pragma solidity 0.8.24;
 
 interface IMarketFactory {
     enum MarketStatus {
@@ -45,7 +45,7 @@ interface IMarketFactory {
 
     /// @notice Extended per-market data for Community tier support.
     ///         Featured markets populate only `tier` (Featured) and `creationStatus` (Active).
-    /// @dev H.3.5 removed `challengerBond` — the challenger bond is now held on the
+    /// @dev removed `challengerBond` — the challenger bond is now held on the
     ///      UMA OptimisticOracleV3, not escrowed inside the factory.
     struct MarketExtended {
         MarketTier tier;

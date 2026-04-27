@@ -200,7 +200,7 @@ contract NegRiskCommunityRegistryTest is Test {
     }
 
     // ──────────────────────────────────────────────
-    // challengeMarket (H.3.5)
+    // challengeMarket
     // ──────────────────────────────────────────────
 
     function test_challengeMarket_setsStateAndCallsOracle() public {
@@ -353,7 +353,7 @@ contract NegRiskCommunityRegistryTest is Test {
     }
 
     // ──────────────────────────────────────────────
-    // Oracle callbacks (H.3.5)
+    // Oracle callbacks
     // ──────────────────────────────────────────────
 
     function test_onChallengeUpheld_routesDepositToChallenger() public {
@@ -411,7 +411,7 @@ contract NegRiskCommunityRegistryTest is Test {
     }
 
     // ──────────────────────────────────────────────
-    // isCommunityMarket filter (H.3.5)
+    // isCommunityMarket filter
     // ──────────────────────────────────────────────
 
     function test_isCommunityMarket_falseWhilePending() public {

@@ -65,7 +65,7 @@ contract MarketHandler is Test {
 
     uint256 public ghost_assertionNonce;
 
-    // ── H.2.8: Community ghost state ──
+    // ── Community ghost state ──
     mapping(uint256 => bool) public ghost_isCommunity;
     mapping(uint256 => uint256) public ghost_challengeDeadline;
     mapping(uint256 => uint256) public ghost_feesAccrued;
@@ -275,7 +275,7 @@ contract MarketHandler is Test {
     }
 
     // ──────────────────────────────────────────────
-    // H.2.8 — Community Markets handlers
+    // Community Markets handlers
     // ──────────────────────────────────────────────
 
     function handler_createCommunityMarket(uint256 creatorSeed, uint256 hoursAhead) external {
@@ -543,7 +543,7 @@ contract MarketInvariants is StdInvariant, Test {
     }
 
     // ──────────────────────────────────────────────
-    // H.2.8 — Community invariants
+    // Community invariants
     // ──────────────────────────────────────────────
 
     /// @notice Per-market creator-fee accrual is conservative:
@@ -617,7 +617,7 @@ contract MarketInvariants is StdInvariant, Test {
     }
 
     /// @notice Factory USDC balance must cover all live obligations:
-    ///         unrefunded creationDeposits + unclaimed creator fees. (H.3.5: challenger bonds
+    ///         unrefunded creationDeposits + unclaimed creator fees. (challenger bonds
     ///         are held on UMA, not in the factory.)
     function invariant_factorySolvency() public view {
         uint256 count = factory.marketCount();

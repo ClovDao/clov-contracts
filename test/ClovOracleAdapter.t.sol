@@ -1159,7 +1159,7 @@ contract ClovOracleAdapterTest is Test {
     }
 
     // ──────────────────────────────────────────────
-    // H.2.7 — Permissionless assertion flag
+    // Permissionless assertion flag
     // ──────────────────────────────────────────────
 
     function test_setPermissionlessAssertion_onlyMarketFactory() public {

@@ -78,7 +78,7 @@ contract MarketFactoryTest is Test {
         vm.mockCall(ctfExchange, abi.encodeWithSignature("registerToken(uint256,uint256,bytes32)"), abi.encode());
 
         // Mock ClovOracleAdapter permissionless-assertion setters — allow factory wiring
-        // (H.2.7) to succeed without a real adapter deployed.
+        // to succeed without a real adapter deployed.
         vm.mockCall(
             oracleAdapter, abi.encodeWithSelector(IClovOracleAdapter.setPermissionlessAssertion.selector), abi.encode()
         );
@@ -592,7 +592,7 @@ contract MarketFactoryTest is Test {
     }
 
     // ──────────────────────────────────────────────
-    // H.2 — Community markets: createCommunityMarket
+    // Community markets: createCommunityMarket
     // ──────────────────────────────────────────────
 
     uint256 internal constant COMMUNITY_DEPOSIT = 50e6; // default communityCreationDeposit
@@ -701,7 +701,7 @@ contract MarketFactoryTest is Test {
     }
 
     // ──────────────────────────────────────────────
-    // H.2.4 — challengeMarket
+    // challengeMarket
     // ──────────────────────────────────────────────
 
     bytes32 internal constant REASON = keccak256("ipfs-reason");
@@ -788,7 +788,7 @@ contract MarketFactoryTest is Test {
     }
 
     // ──────────────────────────────────────────────
-    // H.2.5 — activateMarket
+    // activateMarket
     // ──────────────────────────────────────────────
 
     function test_activateMarket_happyPath() public {
@@ -874,7 +874,7 @@ contract MarketFactoryTest is Test {
     }
 
     // ──────────────────────────────────────────────
-    // H.2.6 — accrueCreatorFee + claimCreatorFee
+    // accrueCreatorFee + claimCreatorFee
     // ──────────────────────────────────────────────
 
     address internal feeRouter = makeAddr("feeRouter");
@@ -989,7 +989,7 @@ contract MarketFactoryTest is Test {
     }
 
     // ──────────────────────────────────────────────
-    // H.2.7 — Oracle permissionless-assertion wiring
+    // Oracle permissionless-assertion wiring
     // ──────────────────────────────────────────────
 
     function test_createCommunityMarket_callsSetPermissionlessAssertionOnOracle() public {

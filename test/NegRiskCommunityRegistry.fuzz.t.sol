@@ -133,7 +133,7 @@ contract NegRiskCommunityRegistryFuzzTest is Test {
     }
 
     // ──────────────────────────────────────────────
-    // challengeMarket fuzz (H.3.5)
+    // challengeMarket fuzz
     // ──────────────────────────────────────────────
 
     function testFuzz_challenge_setsStateAndCallsOracle(uint256 depositSeed) public {

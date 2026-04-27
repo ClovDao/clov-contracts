@@ -51,7 +51,7 @@ contract NegRiskCommunityRegistry is Ownable, Pausable, ReentrancyGuard {
         bytes32 requestId;
     }
 
-    /// @dev H.3.5 removed `challengerBond` — the bond is held on UMA, not in this contract.
+    /// @dev removed `challengerBond` — the bond is held on UMA, not in this contract.
     struct CommunityMarket {
         address creator;
         uint256 createdAt;
@@ -311,7 +311,7 @@ contract NegRiskCommunityRegistry is Ownable, Pausable, ReentrancyGuard {
     }
 
     // ──────────────────────────────────────────────
-    // Oracle Callbacks (H.3.5)
+    // Oracle Callbacks
     // ──────────────────────────────────────────────
 
     /// @notice Oracle-only callback: UMA upheld the challenge. Deposit routes to the challenger,

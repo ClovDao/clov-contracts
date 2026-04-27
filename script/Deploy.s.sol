@@ -161,7 +161,7 @@ contract Deploy is Script {
         negRiskCtfExchange.addOperator(deployer);
         console.log("NegRiskCtfExchange operator added:", deployer);
 
-        // ── Step 15: Deploy NegRiskCommunityRegistry (H.2.13 + H.3.5) ──
+        // ── Step 15: Deploy NegRiskCommunityRegistry ──
         // Community-tier incentive layer for NegRisk markets: permissionless
         // creation with deposit escrow, 48h challenge window, creator-fee accrual.
         // Mirrors MarketFactory's Community surface but keyed by bytes32 nrMarketId.
