@@ -27,7 +27,7 @@ contract MockUSDC is ERC20 {
     }
 }
 
-/// @title E2EClovV2 — Full Clov 2.0 lifecycle integration test
+/// @title E2EClovV2 — Full lifecycle integration test
 /// @notice Exercises the complete flow across all core Clov contracts:
 ///         MarketFactory, ClovOracleAdapter, MarketResolver, and MarketRewards.
 ///
@@ -154,7 +154,7 @@ contract E2EClovV2 is Test {
     // Full Lifecycle: Market + Rewards + Resolution
     // ──────────────────────────────────────────────
 
-    /// @notice Tests the complete Clov 2.0 lifecycle across all core contracts
+    /// @notice Tests the complete lifecycle across all core contracts
     function test_e2e_fullClovV2Lifecycle() public {
         // ════════════════════════════════════════════
         // STEP 1: Create market via MarketFactory

@@ -20,12 +20,12 @@ import { ClovCommunityExecutor } from "../src/ClovCommunityExecutor.sol";
 /// @title Deploy — Clov Protocol full deployment to Polygon Amoy
 /// @notice Deploys Gnosis ConditionalTokens (not available on Amoy),
 ///         then deploys MarketFactory, ClovOracleAdapter, MarketResolver, and wires them together.
-///         Phase H.2 adds the NegRiskCommunityRegistry and authorises it as admin on
+///         A later upgrade adds the NegRiskCommunityRegistry and authorises it as admin on
 ///         NegRiskOperator so the community-tier incentive layer can orchestrate
 ///         permissionless NegRisk market creation.
 /// @dev Usage: forge script script/Deploy.s.sol --rpc-url amoy --broadcast
-///      Clov 2.0: FPMM removed. Trading is handled by the CTF Exchange CLOB
-///      (deployed separately in Phase C).
+///      Trading is handled by the CTF Exchange CLOB
+///      (deployed separately).
 contract Deploy is Script {
     // ── External addresses on Amoy (confirmed) ──
     address constant USDC = 0x41E94Eb019C0762f9Bfcf9Fb1E58725BfB0e7582;

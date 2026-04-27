@@ -32,7 +32,7 @@ contract MockUSDC is ERC20 {
 ///      external dependencies (Gnosis ConditionalTokens, UMA Oracle) since Gnosis contracts
 ///      are Solidity 0.5.x and cannot be co-compiled with 0.8.24.
 ///
-///      NOTE: Trading logic (FPMM) has been removed in Clov 2.0 (CLOB pivot). Trading is now
+///      NOTE: Trading logic (FPMM) has been removed in (CLOB pivot). Trading is now
 ///      handled externally by the CTF Exchange CLOB and is not tested in this integration test.
 contract IntegrationTest is Test {
     // ──────────────────────────────────────────────

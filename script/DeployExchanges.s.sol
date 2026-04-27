@@ -7,7 +7,7 @@ import { NegRiskCtfExchange } from "../src/neg-risk/NegRiskCtfExchange.sol";
 import { NegRiskAdapter } from "../src/neg-risk/NegRiskAdapter.sol";
 
 /// @title DeployExchanges — surgical redeploy of CTFExchange + NegRiskCtfExchange on Amoy
-/// @notice The exchange contracts originally deployed in Phase C predate the
+/// @notice The exchange contracts predate the
 ///         POLY_PROXY signature branch + proxyFactory immutable. This script
 ///         redeploys ONLY those two contracts, wired to the existing CT,
 ///         USDC, NegRiskAdapter, SafeFactory, and ProxyWalletFactory

@@ -29,10 +29,10 @@ contract InvariantMockERC20 is ERC20 {
 // Handler — performs randomized actions and
 // tracks ghost variables for invariant checks
 //
-// Clov 2.0 NOTE: FPMM trading has been removed. This handler now exercises
+// NOTE: This handler now exercises
 // only the surviving lifecycle: create market → assert outcome → resolve.
 // Trading invariants will be re-introduced once the CTF Exchange CLOB
-// integration lands in Phase C.
+// integration lands in a follow-up.
 // ──────────────────────────────────────────────
 
 contract MarketHandler is Test {

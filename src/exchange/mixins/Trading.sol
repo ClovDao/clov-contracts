@@ -376,7 +376,7 @@ abstract contract Trading is IFees, ITrading, IHashing, IRegistry, ISignatures, 
     }
 
     /// @notice Hook called after every order fill. Override to capture fill data.
-    /// @dev Default implementation is a no-op. Phase F MarketRewards will override.
+    /// @dev Default implementation is a no-op. MarketRewards overrides this.
     function _onFill(
         bytes32 orderHash,
         address maker,
