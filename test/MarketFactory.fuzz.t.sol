@@ -618,6 +618,173 @@ contract MarketFactoryFuzzTest is Test {
         factory.updateCommunityCreationDeposit(100e6);
     }
 
+    // ──────────────────────────────────────────────
+    // setChallengeBond fuzz — boundary + downstream effect on challengeMarket pull
+    // ──────────────────────────────────────────────
+
+    /// @notice The bond stored via `setChallengeBond` is the exact amount pulled from the
+    ///         challenger on `challengeMarket`. Bounds the input to a realistic USDC range.
+    function testFuzz_challengeBond_amountBoundaries(uint256 amount) public {
+        amount = bound(amount, 1, 1_000_000e6); // 1 unit USDC up to 1M USDC
+
+        factory.setChallengeBond(amount);
+        assertEq(factory.challengeBond(), amount);
+
+        address creator = makeAddr("commCreator-bondFuzz");
+        uint256 marketId = _createCommunity(creator, 72);
+
+        // Fund challenger with EXACTLY the new bond and exercise the pull path.
+        address challenger = makeAddr("challenger-bondFuzz");
+        usdc.mint(challenger, amount);
+        vm.prank(challenger);
+        usdc.approve(address(factory), amount);
+
+        uint256 chBefore = usdc.balanceOf(challenger);
+        uint256 facBefore = usdc.balanceOf(address(factory));
+
+        vm.prank(challenger);
+        factory.challengeMarket(marketId, REASON);
+
+        // Capture both sides — single-sided assertions hide off-by-one bugs.
+        assertEq(usdc.balanceOf(challenger), chBefore - amount);
+        assertEq(usdc.balanceOf(address(factory)), facBefore + amount);
+        assertEq(factory.getMarketExtended(marketId).challengeBond, amount);
+    }
+
+    // ──────────────────────────────────────────────
+    // challengeMarket — timestamp edge fuzz
+    // ──────────────────────────────────────────────
+
+    /// @notice For any timestamp strictly inside the 48h window, challengeMarket must succeed.
+    function testFuzz_challengeMarket_timestampEdges(uint64 secondsBeforeDeadline) public {
+        address creator = makeAddr("commCreator-tsEdge");
+        uint256 marketId = _createCommunity(creator, 72);
+
+        uint256 deadline = factory.getMarketExtended(marketId).challengeDeadline;
+        // Inclusive of `deadline` itself (challengeMarket reverts only on `> deadline`).
+        uint256 offset = bound(uint256(secondsBeforeDeadline), 1, factory.CHALLENGE_PERIOD() - 1);
+        vm.warp(deadline - offset);
+
+        address challenger = makeAddr("challenger-tsEdge");
+        _fundChallenger(challenger);
+        vm.prank(challenger);
+        factory.challengeMarket(marketId, REASON);
+
+        assertEq(
+            uint8(factory.getMarketExtended(marketId).creationStatus),
+            uint8(IMarketFactory.MarketCreationStatus.Challenged)
+        );
+    }
+
+    /// @notice Boundary unit test: at exactly `block.timestamp == challengeDeadline`, the
+    ///         call must succeed because production checks `block.timestamp > deadline`
+    ///         (strict). Equality is the legal edge.
+    function test_challengeMarket_atDeadlineExact_succeeds() public {
+        address creator = makeAddr("commCreator-deadlineExact");
+        uint256 marketId = _createCommunity(creator, 72);
+
+        uint256 deadline = factory.getMarketExtended(marketId).challengeDeadline;
+        vm.warp(deadline);
+        assertEq(block.timestamp, deadline, "warp must land exactly on the deadline");
+
+        address challenger = makeAddr("challenger-deadlineExact");
+        _fundChallenger(challenger);
+        vm.prank(challenger);
+        factory.challengeMarket(marketId, REASON);
+
+        IMarketFactory.MarketExtended memory ext = factory.getMarketExtended(marketId);
+        assertEq(uint8(ext.creationStatus), uint8(IMarketFactory.MarketCreationStatus.Challenged));
+        assertEq(ext.challenger, challenger);
+    }
+
+    /// @notice Past the deadline the call must revert with ChallengeWindowClosed regardless
+    ///         of how far past we warp.
+    function testFuzz_challengeMarket_pastDeadlineReverts(uint64 secondsAfterDeadline) public {
+        address creator = makeAddr("commCreator-tsPast");
+        uint256 marketId = _createCommunity(creator, 24 * 30); // resolution well past the 48h window
+
+        uint256 offset = bound(uint256(secondsAfterDeadline), 1, 365 days);
+        vm.warp(factory.getMarketExtended(marketId).challengeDeadline + offset);
+
+        address challenger = makeAddr("challenger-tsPast");
+        _fundChallenger(challenger);
+        vm.prank(challenger);
+        vm.expectRevert(IMarketFactory.ChallengeWindowClosed.selector);
+        factory.challengeMarket(marketId, REASON);
+    }
+
+    // ──────────────────────────────────────────────
+    // escalateToUma — post-admin timing edges
+    // ──────────────────────────────────────────────
+
+    /// @dev Mocks the adapter's escalation entry point so escalateToUma's external call resolves.
+    function _mockAssertEscalatedChallenge() internal {
+        vm.mockCall(
+            oracleAdapter,
+            abi.encodeWithSelector(IClovOracleAdapter.assertEscalatedChallenge.selector),
+            abi.encode(bytes32(uint256(0xA55E)))
+        );
+    }
+
+    /// @dev Replicates the unit-test setup for a market in post-admin Cancelled state.
+    ///      Returns the challenged-and-cancelled marketId plus its creator address so the
+    ///      escalator (creator) is known to callers.
+    function _setupPostAdminCancelled() internal returns (uint256 marketId, address creator, address challenger) {
+        creator = makeAddr("commCreator-esc");
+        challenger = makeAddr("challenger-esc");
+
+        uint256 deposit = factory.communityCreationDeposit();
+        _fundAndApprove(creator, deposit);
+        vm.prank(creator);
+        marketId = factory.createCommunityMarket(
+            "ipfs://esc-fuzz", block.timestamp + 30 days, IMarketFactory.Category.Futbol
+        );
+
+        _fundChallenger(challenger);
+        vm.prank(challenger);
+        factory.challengeMarket(marketId, REASON);
+
+        // Resolver = this test contract, which already holds DEFAULT_ADMIN_ROLE → grant + call.
+        bytes32 resolverRole = factory.RESOLVER_ROLE();
+        if (!factory.hasRole(resolverRole, address(this))) {
+            factory.grantRole(resolverRole, address(this));
+        }
+        factory.resolveChallengeUpheld(marketId, keccak256("admin-reason"));
+    }
+
+    /// @notice In-window escalation by the creator post-admin-upheld must succeed.
+    function testFuzz_escalateToUma_postCancelledTiming_inWindow(uint64 secondsAfterCancellation) public {
+        (uint256 marketId, address creator,) = _setupPostAdminCancelled();
+        _mockAssertEscalatedChallenge();
+
+        uint256 offset = bound(uint256(secondsAfterCancellation), 1, factory.POST_RESOLUTION_PERIOD() - 1);
+        vm.warp(block.timestamp + offset);
+
+        vm.prank(creator);
+        factory.escalateToUma(marketId);
+
+        IMarketFactory.MarketExtended memory ext = factory.getMarketExtended(marketId);
+        assertEq(uint8(ext.creationStatus), uint8(IMarketFactory.MarketCreationStatus.EscalatedToUma));
+        assertTrue(ext.escalated);
+        assertEq(ext.escalator, creator);
+    }
+
+    /// @notice Out-of-window escalation must revert EscalationWindowClosed. Bound the warp to
+    ///         start at exactly POST_RESOLUTION_PERIOD + 1 (just past the cooldown) up to a
+    ///         large offset.
+    function testFuzz_escalateToUma_postCancelledTiming_outOfWindow(uint64 secondsAfterCancellation) public {
+        (uint256 marketId, address creator,) = _setupPostAdminCancelled();
+        _mockAssertEscalatedChallenge();
+
+        uint256 cooldown = factory.POST_RESOLUTION_PERIOD();
+        uint256 offset = bound(uint256(secondsAfterCancellation), cooldown + 1, cooldown + 365 days);
+        vm.warp(block.timestamp + offset);
+
+        vm.prank(creator);
+        vm.expectRevert(IMarketFactory.EscalationWindowClosed.selector);
+        factory.escalateToUma(marketId);
+    }
+
     /// @notice Cancelled is a terminal state — no transitions out
     function testFuzz_stateTransition_cancelledIsTerminal(uint8 toRaw) public {
         toRaw = uint8(bound(toRaw, 0, 4));
