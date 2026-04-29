@@ -16,6 +16,8 @@ import { ProxyWalletImplementation } from "../src/ProxyWalletImplementation.sol"
 import { ProxyWalletFactory } from "../src/ProxyWalletFactory.sol";
 import { MarketRewards } from "../src/MarketRewards.sol";
 import { ClovCommunityExecutor } from "../src/ClovCommunityExecutor.sol";
+import { TimelockController } from "@openzeppelin/contracts/governance/TimelockController.sol";
+import { IOptimisticOracleV3 } from "../src/interfaces/IOptimisticOracleV3.sol";
 
 /// @title Deploy — Clov Protocol full deployment to Polygon Amoy
 /// @notice Deploys Gnosis ConditionalTokens (not available on Amoy),
@@ -36,9 +38,16 @@ contract Deploy is Script {
 
     // ── Configuration ──
     uint256 constant CREATION_DEPOSIT = 1e6; // 1 USDC (6 decimals) — matches MIN_CREATION_DEPOSIT
-    uint256 constant BOND_AMOUNT = 1000e6; // 1000 USDC bond for UMA outcome assertions
-    uint256 constant CHALLENGE_BOND_AMOUNT = 500e6; // 500 USDC bond for Community challenge assertions
+    uint256 constant BOND_AMOUNT = 750e6; // 750 USDC bond for UMA outcome and escalation assertions
     uint64 constant ASSERTION_LIVENESS = 7200; // 2 hours dispute window
+    uint256 constant TIMELOCK_MIN_DELAY = 48 hours; // 48h delay on owner-tunable parameter changes
+
+    /// @dev Legacy NegRisk challenge bond (USDC). The binary adapter no longer takes a
+    ///      separate challenge bond — its Layer 1 challenge bond is escrowed inside
+    ///      MarketFactory and is owner-tunable via `setChallengeBond`. This constant is
+    ///      retained only for the parallel NegRisk path which still uses an UMA-bonded
+    ///      challenge until that path is migrated separately.
+    uint256 constant NEGRISK_LEGACY_CHALLENGE_BOND = 500e6;
 
     // ──────────────────────────────────────────────────────────────────────────
     // MAINNET DEPLOYMENT WARNING
@@ -61,10 +70,23 @@ contract Deploy is Script {
 
         uint256 deployerPrivateKey = vm.envUint("PRIVATE_KEY");
         address deployer = vm.addr(deployerPrivateKey);
+        address adminMultisig = vm.envAddress("ADMIN_MULTISIG_ADDRESS");
+        require(adminMultisig != address(0), "ADMIN_MULTISIG_ADDRESS must be non-zero");
 
         console.log("=== Clov Protocol Deployment ===");
-        console.log("Deployer:", deployer);
-        console.log("Chain ID:", block.chainid);
+        console.log("Deployer:           ", deployer);
+        console.log("Admin multisig:     ", adminMultisig);
+        console.log("Chain ID:           ", block.chainid);
+
+        // ── Precheck: UMA bond floor ──
+        // Revert before any state-changing tx if our configured BOND_AMOUNT would be rejected
+        // by `assertTruth` for sitting below the live UMA minimum. Log the headroom so
+        // operators can see how close to the floor we are.
+        uint256 minBond = IOptimisticOracleV3(UMA_ORACLE_V3).getMinimumBond(USDC);
+        require(BOND_AMOUNT >= minBond, "BondBelowMinimum: BOND_AMOUNT < UMA getMinimumBond(USDC)");
+        console.log("UMA min bond (USDC):", minBond);
+        console.log("Configured bond:    ", BOND_AMOUNT);
+        console.log("Headroom (USDC):    ", BOND_AMOUNT - minBond);
 
         vm.startBroadcast(deployerPrivateKey);
 
@@ -96,15 +118,26 @@ contract Deploy is Script {
         ctfExchange.addAdmin(address(marketFactory));
         console.log("CTFExchange: MarketFactory authorised as admin");
 
-        // ── Step 4: Deploy ClovOracleAdapter (outcome bond + challenge bond) ──
+        // ── Step 4: Deploy ClovOracleAdapter (UMA outcome + escalation bond) ──
         ClovOracleAdapter oracleAdapter = new ClovOracleAdapter(
             UMA_ORACLE_V3,
             USDC, // bond token = USDC
             BOND_AMOUNT,
-            CHALLENGE_BOND_AMOUNT,
             ASSERTION_LIVENESS
         );
         console.log("ClovOracleAdapter:", address(oracleAdapter));
+
+        // ── Step 4b: Deploy TimelockController (48h delay) ──
+        // The timelock will hold OWNER_ROLE on MarketFactory and ClovOracleAdapter after
+        // post-deploy role handoff. Proposers = adminMultisig; executors = open
+        // (address(0)) so anyone can execute a queued transaction once the delay elapses;
+        // admin = address(0) so no party can shortcut role administration after deploy.
+        address[] memory proposers = new address[](1);
+        proposers[0] = adminMultisig;
+        address[] memory executors = new address[](1);
+        executors[0] = address(0);
+        TimelockController timelock = new TimelockController(TIMELOCK_MIN_DELAY, proposers, executors, address(0));
+        console.log("TimelockController:", address(timelock));
 
         // ── Step 5: Deploy MarketResolver (without cross-references) ──
         MarketResolver marketResolver = new MarketResolver(conditionalTokens);
@@ -144,7 +177,7 @@ contract Deploy is Script {
             USDC, // bond token
             address(negRiskOperator),
             BOND_AMOUNT,
-            CHALLENGE_BOND_AMOUNT,
+            NEGRISK_LEGACY_CHALLENGE_BOND,
             ASSERTION_LIVENESS
         );
         console.log("ClovNegRiskOracle:", address(clovNegRiskOracle));
@@ -196,6 +229,11 @@ contract Deploy is Script {
         (MarketRewards marketRewards, ClovCommunityExecutor executor, address protocolTreasury) =
             _deployCommunityLayer(ctfExchange, negRiskCtfExchange, marketFactory, negRiskCommunityRegistry, deployer);
 
+        // ── Step 20: Role handoff to Timelock + multisig, deployer renounces all roles ──
+        // Order matters: grant the new holders FIRST, then renounce from deployer LAST. If
+        // we renounced first, we'd brick the contracts (no DEFAULT_ADMIN to grant new roles).
+        _handoffRoles(marketFactory, oracleAdapter, timelock, adminMultisig, deployer);
+
         vm.stopBroadcast();
 
         // ── Summary ──
@@ -205,6 +243,8 @@ contract Deploy is Script {
         console.log("MarketFactory:              ", address(marketFactory));
         console.log("ClovOracleAdapter:          ", address(oracleAdapter));
         console.log("MarketResolver:             ", address(marketResolver));
+        console.log("TimelockController (48h):   ", address(timelock));
+        console.log("AdminMultisig (RESOLVER):   ", adminMultisig);
         console.log("Vault:                      ", address(vault));
         console.log("CTFExchange:                ", address(ctfExchange));
         console.log("NegRiskAdapter:             ", address(negRiskAdapter));
@@ -262,6 +302,42 @@ contract Deploy is Script {
         console.log("CTFExchange: executor authorised as operator");
         negRiskCtfExchange.addOperator(address(executor));
         console.log("NegRiskCtfExchange: executor authorised as operator");
+    }
+
+    /// @dev Post-deploy role handoff. Grants OWNER_ROLE on MarketFactory and ClovOracleAdapter
+    ///      to the Timelock so all owner-tunable parameter changes go through the 48h delay.
+    ///      Grants RESOLVER_ROLE on MarketFactory to the admin multisig so Layer 1 challenges
+    ///      can be adjudicated without a Timelock delay (within their SLA). Finally renounces
+    ///      DEFAULT_ADMIN_ROLE and OWNER_ROLE from the deployer so the deployer EOA has zero
+    ///      privileges on the live contracts.
+    function _handoffRoles(
+        MarketFactory marketFactory,
+        ClovOracleAdapter oracleAdapter,
+        TimelockController timelock,
+        address adminMultisig,
+        address deployer
+    ) internal {
+        bytes32 OWNER_ROLE = marketFactory.OWNER_ROLE();
+        bytes32 RESOLVER_ROLE = marketFactory.RESOLVER_ROLE();
+        bytes32 DEFAULT_ADMIN_ROLE = 0x00;
+
+        // Grant new holders FIRST.
+        marketFactory.grantRole(OWNER_ROLE, address(timelock));
+        marketFactory.grantRole(RESOLVER_ROLE, adminMultisig);
+        marketFactory.grantRole(DEFAULT_ADMIN_ROLE, address(timelock));
+        console.log("MarketFactory: OWNER_ROLE -> Timelock, RESOLVER_ROLE -> multisig, DEFAULT_ADMIN -> Timelock");
+
+        oracleAdapter.grantRole(oracleAdapter.OWNER_ROLE(), address(timelock));
+        oracleAdapter.grantRole(DEFAULT_ADMIN_ROLE, address(timelock));
+        console.log("ClovOracleAdapter: OWNER_ROLE + DEFAULT_ADMIN -> Timelock");
+
+        // Renounce from deployer LAST. Order: OWNER_ROLE before DEFAULT_ADMIN_ROLE so the
+        // renunciation itself is authorised by DEFAULT_ADMIN at every step.
+        marketFactory.renounceRole(OWNER_ROLE, deployer);
+        oracleAdapter.renounceRole(oracleAdapter.OWNER_ROLE(), deployer);
+        marketFactory.renounceRole(DEFAULT_ADMIN_ROLE, deployer);
+        oracleAdapter.renounceRole(DEFAULT_ADMIN_ROLE, deployer);
+        console.log("Deployer: all roles renounced on MarketFactory and ClovOracleAdapter");
     }
 
     /// @dev Deploys a contract from its Foundry compilation artifact using vm.getCode

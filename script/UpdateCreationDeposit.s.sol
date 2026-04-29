@@ -24,16 +24,15 @@ contract UpdateCreationDeposit is Script {
 
         MarketFactory factory = MarketFactory(factoryAddress);
         uint256 previous = factory.creationDeposit();
-        address owner = factory.owner();
+        bytes32 ownerRole = factory.OWNER_ROLE();
 
         console.log("=== Update MarketFactory.creationDeposit ===");
         console.log("Factory:", factoryAddress);
-        console.log("Owner (on-chain):", owner);
         console.log("Sender:", sender);
         console.log("Previous deposit:", previous);
         console.log("New deposit:", newDeposit);
 
-        require(sender == owner, "Sender is not the factory owner");
+        require(factory.hasRole(ownerRole, sender), "Sender does not hold OWNER_ROLE on the factory");
 
         vm.startBroadcast(ownerPrivateKey);
         factory.updateCreationDeposit(newDeposit);
