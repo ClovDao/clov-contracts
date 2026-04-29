@@ -43,7 +43,7 @@ contract ClovOracleAdapterTest is Test {
     address public marketFactory = makeAddr("marketFactory");
     address public marketResolver = makeAddr("marketResolver");
 
-    uint256 public constant BOND_AMOUNT = 750e6; // 750 USDC (matches Deploy.s.sol)
+    uint256 public constant BOND_AMOUNT = 750e6; // UMA bond floor: 750 USDC
     uint64 public constant ASSERTION_LIVENESS = 7200; // 2 hours
     bytes32 public constant DEFAULT_IDENTIFIER = keccak256("ASSERT_TRUTH");
     bytes32 public constant MOCK_ASSERTION_ID = keccak256("mockAssertionId");
@@ -329,7 +329,7 @@ contract ClovOracleAdapterTest is Test {
         adapter.assertOutcome(marketId, true, alice);
     }
 
-    function test_assertOutcome_approvesBondToUmaOracle() public {
+    function test_assertOutcome_approvesBondTokenForUmaOracle() public {
         uint256 marketId = 0;
         _mockActiveMarket(marketId);
 
@@ -342,11 +342,13 @@ contract ClovOracleAdapterTest is Test {
         );
         vm.mockCall(marketFactory, abi.encodeWithSelector(IMarketFactory.updateMarketStatus.selector), abi.encode());
 
-        adapter.assertOutcome(marketId, true, alice);
+        // Assert the adapter calls approve(umaOracle, BOND_AMOUNT) on the bond token.
+        // SafeERC20.forceApprove ultimately invokes the standard ERC20 approve selector,
+        // so this is the on-chain effect we must verify (not a balance change, since
+        // assertTruth is mocked and never actually pulls the bond).
+        vm.expectCall(address(bondToken), abi.encodeCall(IERC20.approve, (address(umaOracle), BOND_AMOUNT)));
 
-        // After assertOutcome, adapter should have approved UMA oracle for bondAmount
-        // The forceApprove + assertTruth flow means UMA took the tokens, so adapter balance should be 0
-        assertEq(bondToken.balanceOf(address(adapter)), BOND_AMOUNT);
+        adapter.assertOutcome(marketId, true, alice);
     }
 
     function test_assertOutcome_revertsIfZeroAddressAsserter() public {
@@ -723,24 +725,18 @@ contract ClovOracleAdapterTest is Test {
     // ──────────────────────────────────────────────
 
     function test_pause_onlyOwner() public {
+        bytes32 role = adapter.OWNER_ROLE();
         vm.prank(alice);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                IAccessControl.AccessControlUnauthorizedAccount.selector, alice, adapter.OWNER_ROLE()
-            )
-        );
+        vm.expectRevert(abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, alice, role));
         adapter.pause();
     }
 
     function test_unpause_onlyOwner() public {
         adapter.pause();
 
+        bytes32 role = adapter.OWNER_ROLE();
         vm.prank(alice);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                IAccessControl.AccessControlUnauthorizedAccount.selector, alice, adapter.OWNER_ROLE()
-            )
-        );
+        vm.expectRevert(abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, alice, role));
         adapter.unpause();
     }
 
@@ -1116,24 +1112,18 @@ contract ClovOracleAdapterTest is Test {
     }
 
     function test_addAsserter_onlyOwner() public {
+        bytes32 role = adapter.OWNER_ROLE();
         vm.prank(alice);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                IAccessControl.AccessControlUnauthorizedAccount.selector, alice, adapter.OWNER_ROLE()
-            )
-        );
+        vm.expectRevert(abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, alice, role));
         adapter.addAsserter(bob);
     }
 
     function test_removeAsserter_onlyOwner() public {
         adapter.addAsserter(bob);
 
+        bytes32 role = adapter.OWNER_ROLE();
         vm.prank(alice);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                IAccessControl.AccessControlUnauthorizedAccount.selector, alice, adapter.OWNER_ROLE()
-            )
-        );
+        vm.expectRevert(abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, alice, role));
         adapter.removeAsserter(bob);
     }
 

@@ -243,24 +243,18 @@ contract MarketFactoryTest is Test {
     // ──────────────────────────────────────────────
 
     function test_pause_onlyOwner() public {
+        bytes32 role = factory.OWNER_ROLE();
+        vm.expectRevert(abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, alice, role));
         vm.prank(alice);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                IAccessControl.AccessControlUnauthorizedAccount.selector, alice, factory.OWNER_ROLE()
-            )
-        );
         factory.pauseMarketCreation();
     }
 
     function test_unpause_onlyOwner() public {
         factory.pauseMarketCreation();
 
+        bytes32 role = factory.OWNER_ROLE();
+        vm.expectRevert(abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, alice, role));
         vm.prank(alice);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                IAccessControl.AccessControlUnauthorizedAccount.selector, alice, factory.OWNER_ROLE()
-            )
-        );
         factory.unpauseMarketCreation();
     }
 
@@ -301,12 +295,9 @@ contract MarketFactoryTest is Test {
     // ──────────────────────────────────────────────
 
     function test_updateCreationDeposit_onlyOwner() public {
+        bytes32 role = factory.OWNER_ROLE();
+        vm.expectRevert(abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, alice, role));
         vm.prank(alice);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                IAccessControl.AccessControlUnauthorizedAccount.selector, alice, factory.OWNER_ROLE()
-            )
-        );
         factory.updateCreationDeposit(20e6);
     }
 
@@ -462,7 +453,7 @@ contract MarketFactoryTest is Test {
     }
 
     // ──────────────────────────────────────────────
-    // cancelMarket (SH-T02)
+    // cancelMarket
     // ──────────────────────────────────────────────
 
     function test_cancelMarket_activeMarket() public {
@@ -519,12 +510,9 @@ contract MarketFactoryTest is Test {
     function test_cancelMarket_revertsForNonOwner() public {
         uint256 marketId = _createDefaultMarket(alice);
 
+        bytes32 role = factory.OWNER_ROLE();
+        vm.expectRevert(abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, alice, role));
         vm.prank(alice);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                IAccessControl.AccessControlUnauthorizedAccount.selector, alice, factory.OWNER_ROLE()
-            )
-        );
         factory.cancelMarket(marketId);
     }
 
@@ -534,7 +522,7 @@ contract MarketFactoryTest is Test {
     }
 
     // ──────────────────────────────────────────────
-    // questionId collision protection (SH-T04)
+    // questionId collision protection
     // ──────────────────────────────────────────────
 
     function test_questionId_differsAcrossFactoryInstances() public {
@@ -877,6 +865,7 @@ contract MarketFactoryTest is Test {
 
     function test_activateMarket_revertsIfChallenged() public {
         uint256 marketId = _createCommunityMarket(alice);
+        _fundChallenger(bob);
         vm.prank(bob);
         factory.challengeMarket(marketId, REASON);
 
@@ -1056,19 +1045,19 @@ contract MarketFactoryTest is Test {
         vm.prank(alice);
         usdc.approve(address(factory), CREATION_DEPOSIT);
 
-        // vm.expectCall would fail if the call happened; we assert by observing state elsewhere.
-        // Instead, use a recorder: ensure the adapter is never called with the setter selector.
-        vm.recordLogs();
+        uint256 expectedMarketId = factory.marketCount();
+        // Assert setPermissionlessAssertion is NOT called for featured-market creation.
+        // The fourth arg (count = 0) makes vm.expectCall fail if the call occurs at all.
+        vm.expectCall(
+            oracleAdapter, abi.encodeCall(IClovOracleAdapter.setPermissionlessAssertion, (expectedMarketId)), 0
+        );
         vm.prank(alice);
         factory.createMarket("ipfs://x", block.timestamp + 2 hours, IMarketFactory.Category.Futbol);
-        // Recorded logs come only from MarketFactory since oracleAdapter is a mock
-        // (no events emitted by a bare mockCall). That alone is enough to demonstrate
-        // no PermissionlessAssertionSet was propagated. Assertion kept implicit by the
-        // downstream integration tests in ClovOracleAdapter suite.
     }
 
     function test_challengeMarket_callsClearPermissionlessAssertion() public {
         uint256 marketId = _createCommunityMarket(alice);
+        _fundChallenger(bob);
 
         vm.expectCall(oracleAdapter, abi.encodeCall(IClovOracleAdapter.clearPermissionlessAssertion, (marketId)));
         vm.prank(bob);
@@ -1115,5 +1104,502 @@ contract MarketFactoryTest is Test {
         factory.claimCreatorFee(marketId);
 
         assertEq(usdc.balanceOf(alice), aliceBalBefore + 5e6);
+    }
+
+    // ──────────────────────────────────────────────
+    // Layer 1 — resolveChallengeUpheld
+    // ──────────────────────────────────────────────
+
+    address internal resolver = makeAddr("resolver");
+    bytes32 internal constant RESOLVE_REASON = keccak256("admin-reason");
+
+    /// @dev Grants RESOLVER_ROLE to the test resolver. Idempotent.
+    function _grantResolver() internal {
+        bytes32 role = factory.RESOLVER_ROLE();
+        if (!factory.hasRole(role, resolver)) {
+            factory.grantRole(role, resolver);
+        }
+    }
+
+    /// @dev Helper: create a community market, fund bob as challenger, and challenge it.
+    function _challengedCommunityMarket() internal returns (uint256 marketId) {
+        marketId = _createCommunityMarket(alice);
+        _fundChallenger(bob);
+        vm.prank(bob);
+        factory.challengeMarket(marketId, REASON);
+    }
+
+    function test_resolveChallengeUpheld_happyPath() public {
+        uint256 marketId = _challengedCommunityMarket();
+        _grantResolver();
+
+        uint256 bond = factory.challengeBond();
+        uint256 bobBefore = usdc.balanceOf(bob);
+        uint256 aliceBefore = usdc.balanceOf(alice);
+
+        vm.prank(resolver);
+        factory.resolveChallengeUpheld(marketId, RESOLVE_REASON);
+
+        // Challenger receives creationDeposit + chBond; creator gets nothing back.
+        assertEq(usdc.balanceOf(bob), bobBefore + COMMUNITY_DEPOSIT + bond);
+        assertEq(usdc.balanceOf(alice), aliceBefore);
+
+        // Lifecycle is Cancelled, business status is Cancelled, deposit/bond zeroed.
+        IMarketFactory.MarketExtended memory ext = factory.getMarketExtended(marketId);
+        assertEq(uint8(ext.creationStatus), uint8(IMarketFactory.MarketCreationStatus.Cancelled));
+        assertEq(ext.challengeBond, 0);
+        assertEq(ext.resolutionDeadline, block.timestamp + factory.POST_RESOLUTION_PERIOD());
+
+        IMarketFactory.MarketData memory m = factory.getMarket(marketId);
+        assertEq(uint8(m.status), uint8(IMarketFactory.MarketStatus.Cancelled));
+        assertEq(m.creationDeposit, 0);
+    }
+
+    function test_resolveChallengeUpheld_emitsChallengeResolved() public {
+        uint256 marketId = _challengedCommunityMarket();
+        _grantResolver();
+
+        vm.expectEmit(true, true, false, true);
+        emit IMarketFactory.ChallengeResolved(marketId, true, RESOLVE_REASON, bob);
+
+        vm.prank(resolver);
+        factory.resolveChallengeUpheld(marketId, RESOLVE_REASON);
+    }
+
+    function test_resolveChallengeUpheld_revertsForNonResolver() public {
+        uint256 marketId = _challengedCommunityMarket();
+        bytes32 role = factory.RESOLVER_ROLE();
+
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, alice, role));
+        factory.resolveChallengeUpheld(marketId, RESOLVE_REASON);
+    }
+
+    function test_resolveChallengeUpheld_revertsIfNotChallenged_pending() public {
+        uint256 marketId = _createCommunityMarket(alice);
+        _grantResolver();
+
+        vm.prank(resolver);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IMarketFactory.InvalidMarketTransition.selector,
+                IMarketFactory.MarketCreationStatus.Pending,
+                IMarketFactory.MarketCreationStatus.Cancelled
+            )
+        );
+        factory.resolveChallengeUpheld(marketId, RESOLVE_REASON);
+    }
+
+    function test_resolveChallengeUpheld_revertsIfAlreadyCancelled() public {
+        uint256 marketId = _challengedCommunityMarket();
+        _grantResolver();
+
+        vm.prank(resolver);
+        factory.resolveChallengeUpheld(marketId, RESOLVE_REASON);
+
+        // Second call reverts: state is already Cancelled.
+        vm.prank(resolver);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IMarketFactory.InvalidMarketTransition.selector,
+                IMarketFactory.MarketCreationStatus.Cancelled,
+                IMarketFactory.MarketCreationStatus.Cancelled
+            )
+        );
+        factory.resolveChallengeUpheld(marketId, RESOLVE_REASON);
+    }
+
+    // ──────────────────────────────────────────────
+    // Layer 1 — resolveChallengeRejected
+    // ──────────────────────────────────────────────
+
+    function test_resolveChallengeRejected_happyPath() public {
+        uint256 marketId = _challengedCommunityMarket();
+        _grantResolver();
+
+        uint256 bond = factory.challengeBond();
+        uint256 aliceBefore = usdc.balanceOf(alice);
+
+        vm.prank(resolver);
+        factory.resolveChallengeRejected(marketId, RESOLVE_REASON);
+
+        // Creator receives chBond (bond slashed to creator).
+        assertEq(usdc.balanceOf(alice), aliceBefore + bond);
+
+        // creationDeposit stays escrowed inside the factory until refund/cancellation flow.
+        IMarketFactory.MarketData memory m = factory.getMarket(marketId);
+        assertEq(m.creationDeposit, COMMUNITY_DEPOSIT);
+        // Business status stays Created — activateMarket can promote later post-deadline.
+        assertEq(uint8(m.status), uint8(IMarketFactory.MarketStatus.Created));
+
+        IMarketFactory.MarketExtended memory ext = factory.getMarketExtended(marketId);
+        assertEq(uint8(ext.creationStatus), uint8(IMarketFactory.MarketCreationStatus.Pending));
+        assertEq(ext.challengeBond, 0);
+        assertEq(ext.resolutionDeadline, block.timestamp + factory.POST_RESOLUTION_PERIOD());
+        assertEq(ext.challengeDeadline, block.timestamp + factory.POST_RESOLUTION_PERIOD());
+    }
+
+    function test_resolveChallengeRejected_emitsChallengeResolved() public {
+        uint256 marketId = _challengedCommunityMarket();
+        _grantResolver();
+
+        vm.expectEmit(true, true, false, true);
+        emit IMarketFactory.ChallengeResolved(marketId, false, RESOLVE_REASON, alice);
+
+        vm.prank(resolver);
+        factory.resolveChallengeRejected(marketId, RESOLVE_REASON);
+    }
+
+    function test_resolveChallengeRejected_revertsForNonResolver() public {
+        uint256 marketId = _challengedCommunityMarket();
+        bytes32 role = factory.RESOLVER_ROLE();
+
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, alice, role));
+        factory.resolveChallengeRejected(marketId, RESOLVE_REASON);
+    }
+
+    function test_resolveChallengeRejected_revertsIfNotChallenged() public {
+        uint256 marketId = _createCommunityMarket(alice);
+        _grantResolver();
+
+        vm.prank(resolver);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IMarketFactory.InvalidMarketTransition.selector,
+                IMarketFactory.MarketCreationStatus.Pending,
+                IMarketFactory.MarketCreationStatus.Pending
+            )
+        );
+        factory.resolveChallengeRejected(marketId, RESOLVE_REASON);
+    }
+
+    function test_resolveChallengeRejected_reArmsChallengeWindow() public {
+        // Coverage of re-arm: post-rejection the market is back in Pending, so a fresh
+        // challenge from a different party should succeed (intentionally deferred —
+        // deeper race-condition edge case covered separately).
+        uint256 marketId = _challengedCommunityMarket();
+        _grantResolver();
+        vm.prank(resolver);
+        factory.resolveChallengeRejected(marketId, RESOLVE_REASON);
+
+        address carol = makeAddr("carol-rearm");
+        _fundChallenger(carol);
+        vm.prank(carol);
+        factory.challengeMarket(marketId, REASON);
+
+        IMarketFactory.MarketExtended memory ext = factory.getMarketExtended(marketId);
+        assertEq(uint8(ext.creationStatus), uint8(IMarketFactory.MarketCreationStatus.Challenged));
+        assertEq(ext.challenger, carol);
+    }
+
+    // ──────────────────────────────────────────────
+    // Layer 2 — escalateToUma standing + cooldown + one-shot
+    // ──────────────────────────────────────────────
+
+    /// @dev Prepares a market in the post-admin Cancelled state (admin upheld the challenge).
+    function _setupPostAdminCancelled() internal returns (uint256 marketId) {
+        marketId = _challengedCommunityMarket();
+        _grantResolver();
+        vm.prank(resolver);
+        factory.resolveChallengeUpheld(marketId, RESOLVE_REASON);
+    }
+
+    /// @dev Prepares a market in the post-admin Pending state (admin rejected the challenge).
+    function _setupPostAdminPending() internal returns (uint256 marketId) {
+        marketId = _challengedCommunityMarket();
+        _grantResolver();
+        vm.prank(resolver);
+        factory.resolveChallengeRejected(marketId, RESOLVE_REASON);
+    }
+
+    /// @dev Mocks adapter.assertEscalatedChallenge so escalateToUma's external call succeeds.
+    function _mockAssertEscalatedChallenge() internal {
+        vm.mockCall(
+            oracleAdapter,
+            abi.encodeWithSelector(IClovOracleAdapter.assertEscalatedChallenge.selector),
+            abi.encode(bytes32(uint256(0xA55E)))
+        );
+    }
+
+    function test_escalateToUma_creatorStanding_postCancelled() public {
+        uint256 marketId = _setupPostAdminCancelled();
+        _mockAssertEscalatedChallenge();
+
+        // Verifies adapter is invoked with (marketId, reasonHash, creator).
+        vm.expectCall(
+            oracleAdapter, abi.encodeCall(IClovOracleAdapter.assertEscalatedChallenge, (marketId, REASON, alice))
+        );
+
+        vm.expectEmit(true, true, false, false);
+        emit IMarketFactory.EscalatedToUma(marketId, alice);
+
+        vm.prank(alice);
+        factory.escalateToUma(marketId);
+
+        IMarketFactory.MarketExtended memory ext = factory.getMarketExtended(marketId);
+        assertEq(uint8(ext.creationStatus), uint8(IMarketFactory.MarketCreationStatus.EscalatedToUma));
+        assertTrue(ext.escalated);
+        assertEq(ext.escalator, alice);
+    }
+
+    function test_escalateToUma_challengerStanding_postPending() public {
+        uint256 marketId = _setupPostAdminPending();
+        _mockAssertEscalatedChallenge();
+
+        vm.expectCall(
+            oracleAdapter, abi.encodeCall(IClovOracleAdapter.assertEscalatedChallenge, (marketId, REASON, bob))
+        );
+
+        vm.prank(bob);
+        factory.escalateToUma(marketId);
+
+        IMarketFactory.MarketExtended memory ext = factory.getMarketExtended(marketId);
+        assertEq(uint8(ext.creationStatus), uint8(IMarketFactory.MarketCreationStatus.EscalatedToUma));
+        assertEq(ext.escalator, bob);
+    }
+
+    function test_escalateToUma_revertsForRandomCaller() public {
+        uint256 marketId = _setupPostAdminCancelled();
+        _mockAssertEscalatedChallenge();
+
+        address random = makeAddr("random-escalator");
+        vm.prank(random);
+        vm.expectRevert(abi.encodeWithSelector(IMarketFactory.NotEligibleToEscalate.selector, random));
+        factory.escalateToUma(marketId);
+    }
+
+    function test_escalateToUma_revertsBeforeAdminActs() public {
+        // While Challenged the L1 escrow has not been disbursed — escalation must wait.
+        uint256 marketId = _challengedCommunityMarket();
+        _mockAssertEscalatedChallenge();
+
+        // Creator has standing but window is closed (admin hasn't acted yet).
+        vm.prank(alice);
+        vm.expectRevert(IMarketFactory.EscalationWindowClosed.selector);
+        factory.escalateToUma(marketId);
+
+        // Challenger likewise blocked.
+        vm.prank(bob);
+        vm.expectRevert(IMarketFactory.EscalationWindowClosed.selector);
+        factory.escalateToUma(marketId);
+    }
+
+    function test_escalateToUma_revertsAfterCooldownExpires() public {
+        uint256 marketId = _setupPostAdminCancelled();
+        _mockAssertEscalatedChallenge();
+
+        vm.warp(block.timestamp + factory.POST_RESOLUTION_PERIOD() + 1);
+
+        vm.prank(alice);
+        vm.expectRevert(IMarketFactory.EscalationWindowClosed.selector);
+        factory.escalateToUma(marketId);
+    }
+
+    function test_escalateToUma_oneShot() public {
+        uint256 marketId = _setupPostAdminCancelled();
+        _mockAssertEscalatedChallenge();
+
+        vm.prank(alice);
+        factory.escalateToUma(marketId);
+
+        // Second call reverts: AlreadyEscalated guard fires before standing/state checks.
+        vm.prank(bob);
+        vm.expectRevert(IMarketFactory.AlreadyEscalated.selector);
+        factory.escalateToUma(marketId);
+
+        vm.prank(alice);
+        vm.expectRevert(IMarketFactory.AlreadyEscalated.selector);
+        factory.escalateToUma(marketId);
+    }
+
+    // ──────────────────────────────────────────────
+    // Layer 2 — onEscalationUpheld / onEscalationRejected callbacks
+    // ──────────────────────────────────────────────
+
+    /// @dev Drives a market through challenge → admin decision → escalator calls escalateToUma.
+    ///      Returns the marketId in EscalatedToUma state with the given escalator.
+    function _setupEscalatedMarket(bool adminUpheld, bool creatorEscalates) internal returns (uint256 marketId) {
+        marketId = _challengedCommunityMarket();
+        _grantResolver();
+        vm.prank(resolver);
+        if (adminUpheld) {
+            factory.resolveChallengeUpheld(marketId, RESOLVE_REASON);
+        } else {
+            factory.resolveChallengeRejected(marketId, RESOLVE_REASON);
+        }
+        _mockAssertEscalatedChallenge();
+
+        address escalator = creatorEscalates ? alice : bob;
+        vm.prank(escalator);
+        factory.escalateToUma(marketId);
+    }
+
+    function test_onEscalationUpheld_revertsForNonAdapter() public {
+        uint256 marketId = _setupEscalatedMarket({ adminUpheld: true, creatorEscalates: true });
+
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(IMarketFactory.OnlyOracleAdapter.selector, alice));
+        factory.onEscalationUpheld(marketId);
+    }
+
+    function test_onEscalationRejected_revertsForNonAdapter() public {
+        uint256 marketId = _setupEscalatedMarket({ adminUpheld: true, creatorEscalates: true });
+
+        vm.prank(bob);
+        vm.expectRevert(abi.encodeWithSelector(IMarketFactory.OnlyOracleAdapter.selector, bob));
+        factory.onEscalationRejected(marketId);
+    }
+
+    function test_onEscalationUpheld_challengerEscalator_marketCancelled() public {
+        // Admin rejected challenge → market Pending → challenger escalates → UMA upheld
+        // → market flips to Cancelled (challenger's appeal won).
+        uint256 marketId = _setupEscalatedMarket({ adminUpheld: false, creatorEscalates: false });
+
+        vm.prank(oracleAdapter);
+        factory.onEscalationUpheld(marketId);
+
+        IMarketFactory.MarketExtended memory ext = factory.getMarketExtended(marketId);
+        assertEq(uint8(ext.creationStatus), uint8(IMarketFactory.MarketCreationStatus.Cancelled));
+
+        IMarketFactory.MarketData memory m = factory.getMarket(marketId);
+        assertEq(uint8(m.status), uint8(IMarketFactory.MarketStatus.Cancelled));
+    }
+
+    function test_onEscalationRejected_challengerEscalator_marketStaysPending() public {
+        // Admin rejected → challenger escalates → UMA rejects → admin's Pending stands.
+        uint256 marketId = _setupEscalatedMarket({ adminUpheld: false, creatorEscalates: false });
+
+        // Mock the setPermissionlessAssertion call the callback re-issues.
+        vm.expectCall(oracleAdapter, abi.encodeCall(IClovOracleAdapter.setPermissionlessAssertion, (marketId)));
+
+        vm.prank(oracleAdapter);
+        factory.onEscalationRejected(marketId);
+
+        IMarketFactory.MarketExtended memory ext = factory.getMarketExtended(marketId);
+        assertEq(uint8(ext.creationStatus), uint8(IMarketFactory.MarketCreationStatus.Pending));
+        // Business status untouched (still Created — activateMarket promotes post-deadline).
+        IMarketFactory.MarketData memory m = factory.getMarket(marketId);
+        assertEq(uint8(m.status), uint8(IMarketFactory.MarketStatus.Created));
+    }
+
+    function test_onEscalationUpheld_creatorEscalator_marketReinstatedPending() public {
+        // Admin upheld (cancelled) → creator escalates → UMA upheld (admin overturned)
+        // → market reinstated to Pending and re-armed.
+        uint256 marketId = _setupEscalatedMarket({ adminUpheld: true, creatorEscalates: true });
+
+        vm.expectCall(oracleAdapter, abi.encodeCall(IClovOracleAdapter.setPermissionlessAssertion, (marketId)));
+
+        vm.prank(oracleAdapter);
+        factory.onEscalationUpheld(marketId);
+
+        IMarketFactory.MarketExtended memory ext = factory.getMarketExtended(marketId);
+        assertEq(uint8(ext.creationStatus), uint8(IMarketFactory.MarketCreationStatus.Pending));
+        assertEq(ext.challengeDeadline, block.timestamp + factory.POST_RESOLUTION_PERIOD());
+
+        IMarketFactory.MarketData memory m = factory.getMarket(marketId);
+        assertEq(uint8(m.status), uint8(IMarketFactory.MarketStatus.Created));
+    }
+
+    function test_onEscalationRejected_creatorEscalator_marketStaysCancelled() public {
+        // Admin upheld (cancelled) → creator escalates → UMA rejects → admin stands → Cancelled.
+        uint256 marketId = _setupEscalatedMarket({ adminUpheld: true, creatorEscalates: true });
+
+        vm.prank(oracleAdapter);
+        factory.onEscalationRejected(marketId);
+
+        IMarketFactory.MarketExtended memory ext = factory.getMarketExtended(marketId);
+        assertEq(uint8(ext.creationStatus), uint8(IMarketFactory.MarketCreationStatus.Cancelled));
+
+        IMarketFactory.MarketData memory m = factory.getMarket(marketId);
+        assertEq(uint8(m.status), uint8(IMarketFactory.MarketStatus.Cancelled));
+    }
+
+    // ──────────────────────────────────────────────
+    // Bond param setters
+    // ──────────────────────────────────────────────
+
+    function test_setChallengeBond_onlyOwner() public {
+        bytes32 role = factory.OWNER_ROLE();
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, alice, role));
+        factory.setChallengeBond(123e6);
+    }
+
+    function test_setChallengeBond_emitsAndStores() public {
+        uint256 oldBond = factory.challengeBond();
+        uint256 newBond = 123e6;
+
+        vm.expectEmit(true, false, false, true);
+        emit IMarketFactory.BondParamUpdated(keccak256("challengeBond"), oldBond, newBond);
+
+        factory.setChallengeBond(newBond);
+        assertEq(factory.challengeBond(), newBond);
+    }
+
+    function test_setCreationDeposit_onlyOwner() public {
+        bytes32 role = factory.OWNER_ROLE();
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, alice, role));
+        factory.setCreationDeposit(20e6);
+    }
+
+    function test_setCreationDeposit_emitsAndStores() public {
+        uint256 oldDeposit = factory.creationDeposit();
+        uint256 newDeposit = 25e6;
+
+        vm.expectEmit(true, false, false, true);
+        emit IMarketFactory.BondParamUpdated(keccak256("creationDeposit"), oldDeposit, newDeposit);
+
+        factory.setCreationDeposit(newDeposit);
+        assertEq(factory.creationDeposit(), newDeposit);
+    }
+
+    function test_setCommunityCreationDeposit_onlyOwner() public {
+        bytes32 role = factory.OWNER_ROLE();
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, alice, role));
+        factory.setCommunityCreationDeposit(75e6);
+    }
+
+    function test_setCommunityCreationDeposit_emitsAndStores() public {
+        uint256 oldDeposit = factory.communityCreationDeposit();
+        uint256 newDeposit = 75e6;
+
+        vm.expectEmit(true, false, false, true);
+        emit IMarketFactory.BondParamUpdated(keccak256("communityCreationDeposit"), oldDeposit, newDeposit);
+
+        factory.setCommunityCreationDeposit(newDeposit);
+        assertEq(factory.communityCreationDeposit(), newDeposit);
+    }
+
+    // ──────────────────────────────────────────────
+    // cancelMarket guards during dispute lifecycle
+    // ──────────────────────────────────────────────
+
+    function test_cancelMarket_revertsDuringChallenged() public {
+        uint256 marketId = _challengedCommunityMarket();
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IMarketFactory.InvalidMarketTransition.selector,
+                IMarketFactory.MarketCreationStatus.Challenged,
+                IMarketFactory.MarketCreationStatus.Cancelled
+            )
+        );
+        factory.cancelMarket(marketId);
+    }
+
+    function test_cancelMarket_revertsDuringEscalatedToUma() public {
+        uint256 marketId = _setupEscalatedMarket({ adminUpheld: true, creatorEscalates: true });
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IMarketFactory.InvalidMarketTransition.selector,
+                IMarketFactory.MarketCreationStatus.EscalatedToUma,
+                IMarketFactory.MarketCreationStatus.Cancelled
+            )
+        );
+        factory.cancelMarket(marketId);
     }
 }

@@ -31,7 +31,7 @@ contract MockUSDC is ERC20 {
 /// @notice Exercises the complete flow across all core Clov contracts:
 ///         MarketFactory, ClovOracleAdapter, MarketResolver, and MarketRewards.
 ///
-/// @dev CTF Exchange order matching is NOT tested here. The exchange is a complex Polymarket fork
+/// @dev CTF Exchange order matching is NOT tested here. The exchange is a complex CLOB module
 ///      with many dependencies (Auth, Signatures, EIP-712, Safe wallet factory, ERC-1155 approvals)
 ///      that would require extensive mock scaffolding. Exchange matching is tested separately in its
 ///      own test suite. This test focuses on contract INTERACTIONS across the core lifecycle:

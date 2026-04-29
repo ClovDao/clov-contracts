@@ -168,12 +168,9 @@ contract MarketFactoryFuzzTest is Test {
     function testFuzz_updateCreationDeposit_onlyOwner(address caller) public {
         vm.assume(caller != address(this));
 
+        bytes32 role = factory.OWNER_ROLE();
+        vm.expectRevert(abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, caller, role));
         vm.prank(caller);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                IAccessControl.AccessControlUnauthorizedAccount.selector, caller, factory.OWNER_ROLE()
-            )
-        );
         factory.updateCreationDeposit(20e6);
     }
 
@@ -250,7 +247,7 @@ contract MarketFactoryFuzzTest is Test {
     }
 
     // ──────────────────────────────────────────────
-    // State Transition Validation fuzz (SH-T01)
+    // State Transition Validation fuzz
     // ──────────────────────────────────────────────
 
     /// @dev Returns true if (from, to) is a valid state transition
@@ -422,6 +419,7 @@ contract MarketFactoryFuzzTest is Test {
         uint256 marketId = _createCommunity(creator, 72);
 
         address challenger = makeAddr("challenger");
+        _fundChallenger(challenger);
         vm.prank(challenger);
         factory.challengeMarket(marketId, REASON);
 
@@ -522,6 +520,7 @@ contract MarketFactoryFuzzTest is Test {
         uint256 marketId = _createCommunity(creator, 24 * 30);
 
         address challenger = makeAddr("challenger");
+        _fundChallenger(challenger);
         vm.prank(challenger);
         factory.challengeMarket(marketId, REASON);
 
@@ -613,12 +612,9 @@ contract MarketFactoryFuzzTest is Test {
     function testFuzz_communityAdmin_onlyOwner(address caller) public {
         vm.assume(caller != address(this));
 
+        bytes32 role = factory.OWNER_ROLE();
+        vm.expectRevert(abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, caller, role));
         vm.prank(caller);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                IAccessControl.AccessControlUnauthorizedAccount.selector, caller, factory.OWNER_ROLE()
-            )
-        );
         factory.updateCommunityCreationDeposit(100e6);
     }
 
