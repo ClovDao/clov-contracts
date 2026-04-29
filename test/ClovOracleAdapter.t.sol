@@ -9,7 +9,7 @@ import { IMarketFactory } from "../src/interfaces/IMarketFactory.sol";
 import { IMarketResolver } from "../src/interfaces/IMarketResolver.sol";
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { ERC20 } from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
-import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
+import { IAccessControl } from "@openzeppelin/contracts/access/IAccessControl.sol";
 import { Pausable } from "@openzeppelin/contracts/utils/Pausable.sol";
 
 contract MockERC20 is ERC20 {
@@ -22,13 +22,9 @@ contract MockERC20 is ERC20 {
 
 /// @dev Harness that exposes internal _uint256ToString for direct testing
 contract ClovOracleAdapterHarness is ClovOracleAdapter {
-    constructor(
-        address _umaOracle,
-        address _bondToken,
-        uint256 _bondAmount,
-        uint256 _challengeBondAmount,
-        uint64 _assertionLiveness
-    ) ClovOracleAdapter(_umaOracle, _bondToken, _bondAmount, _challengeBondAmount, _assertionLiveness) { }
+    constructor(address _umaOracle, address _bondToken, uint256 _bondAmount, uint64 _assertionLiveness)
+        ClovOracleAdapter(_umaOracle, _bondToken, _bondAmount, _assertionLiveness)
+    { }
 
     function exposed_uint256ToString(uint256 value) external pure returns (string memory) {
         return _uint256ToString(value);
@@ -47,8 +43,7 @@ contract ClovOracleAdapterTest is Test {
     address public marketFactory = makeAddr("marketFactory");
     address public marketResolver = makeAddr("marketResolver");
 
-    uint256 public constant BOND_AMOUNT = 1000e6; // 1000 USDC
-    uint256 public constant CHALLENGE_BOND_AMOUNT = 500e6; // 500 USDC
+    uint256 public constant BOND_AMOUNT = 750e6; // 750 USDC (matches Deploy.s.sol)
     uint64 public constant ASSERTION_LIVENESS = 7200; // 2 hours
     bytes32 public constant DEFAULT_IDENTIFIER = keccak256("ASSERT_TRUTH");
     bytes32 public constant MOCK_ASSERTION_ID = keccak256("mockAssertionId");
@@ -64,9 +59,7 @@ contract ClovOracleAdapterTest is Test {
             abi.encode(DEFAULT_IDENTIFIER)
         );
 
-        adapter = new ClovOracleAdapterHarness(
-            umaOracle, address(bondToken), BOND_AMOUNT, CHALLENGE_BOND_AMOUNT, ASSERTION_LIVENESS
-        );
+        adapter = new ClovOracleAdapterHarness(umaOracle, address(bondToken), BOND_AMOUNT, ASSERTION_LIVENESS);
         adapter.initialize(marketFactory, marketResolver);
     }
 
@@ -129,18 +122,16 @@ contract ClovOracleAdapterTest is Test {
         assertEq(adapter.bondAmount(), BOND_AMOUNT);
         assertEq(adapter.assertionLiveness(), ASSERTION_LIVENESS);
         assertEq(adapter.defaultIdentifier(), DEFAULT_IDENTIFIER);
-        assertEq(adapter.owner(), owner);
+        assertTrue(adapter.hasRole(adapter.OWNER_ROLE(), owner));
+        assertTrue(adapter.hasRole(0x00, owner));
     }
 
     function test_constructor_revertsOnZeroAddress_umaOracle() public {
         vm.expectRevert(ClovOracleAdapter.ZeroAddress.selector);
-        new ClovOracleAdapterHarness(
-            address(0), address(bondToken), BOND_AMOUNT, CHALLENGE_BOND_AMOUNT, ASSERTION_LIVENESS
-        );
+        new ClovOracleAdapterHarness(address(0), address(bondToken), BOND_AMOUNT, ASSERTION_LIVENESS);
     }
 
     function test_constructor_revertsOnZeroAddress_bondToken() public {
-        // Need to mock defaultIdentifier for any valid umaOracle
         address newUma = makeAddr("newUma");
         vm.mockCall(
             newUma,
@@ -149,7 +140,7 @@ contract ClovOracleAdapterTest is Test {
         );
 
         vm.expectRevert(ClovOracleAdapter.ZeroAddress.selector);
-        new ClovOracleAdapterHarness(newUma, address(0), BOND_AMOUNT, CHALLENGE_BOND_AMOUNT, ASSERTION_LIVENESS);
+        new ClovOracleAdapterHarness(newUma, address(0), BOND_AMOUNT, ASSERTION_LIVENESS);
     }
 
     function test_initialize_revertsOnZeroAddress_marketFactory() public {
@@ -160,9 +151,8 @@ contract ClovOracleAdapterTest is Test {
             abi.encode(DEFAULT_IDENTIFIER)
         );
 
-        ClovOracleAdapterHarness a = new ClovOracleAdapterHarness(
-            newUma, address(bondToken), BOND_AMOUNT, CHALLENGE_BOND_AMOUNT, ASSERTION_LIVENESS
-        );
+        ClovOracleAdapterHarness a =
+            new ClovOracleAdapterHarness(newUma, address(bondToken), BOND_AMOUNT, ASSERTION_LIVENESS);
         vm.expectRevert(ClovOracleAdapter.ZeroAddress.selector);
         a.initialize(address(0), marketResolver);
     }
@@ -175,9 +165,8 @@ contract ClovOracleAdapterTest is Test {
             abi.encode(DEFAULT_IDENTIFIER)
         );
 
-        ClovOracleAdapterHarness a = new ClovOracleAdapterHarness(
-            newUma, address(bondToken), BOND_AMOUNT, CHALLENGE_BOND_AMOUNT, ASSERTION_LIVENESS
-        );
+        ClovOracleAdapterHarness a =
+            new ClovOracleAdapterHarness(newUma, address(bondToken), BOND_AMOUNT, ASSERTION_LIVENESS);
         vm.expectRevert(ClovOracleAdapter.ZeroAddress.selector);
         a.initialize(marketFactory, address(0));
     }
@@ -735,7 +724,11 @@ contract ClovOracleAdapterTest is Test {
 
     function test_pause_onlyOwner() public {
         vm.prank(alice);
-        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, alice));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IAccessControl.AccessControlUnauthorizedAccount.selector, alice, adapter.OWNER_ROLE()
+            )
+        );
         adapter.pause();
     }
 
@@ -743,7 +736,11 @@ contract ClovOracleAdapterTest is Test {
         adapter.pause();
 
         vm.prank(alice);
-        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, alice));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IAccessControl.AccessControlUnauthorizedAccount.selector, alice, adapter.OWNER_ROLE()
+            )
+        );
         adapter.unpause();
     }
 
@@ -1120,7 +1117,11 @@ contract ClovOracleAdapterTest is Test {
 
     function test_addAsserter_onlyOwner() public {
         vm.prank(alice);
-        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, alice));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IAccessControl.AccessControlUnauthorizedAccount.selector, alice, adapter.OWNER_ROLE()
+            )
+        );
         adapter.addAsserter(bob);
     }
 
@@ -1128,7 +1129,11 @@ contract ClovOracleAdapterTest is Test {
         adapter.addAsserter(bob);
 
         vm.prank(alice);
-        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, alice));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IAccessControl.AccessControlUnauthorizedAccount.selector, alice, adapter.OWNER_ROLE()
+            )
+        );
         adapter.removeAsserter(bob);
     }
 

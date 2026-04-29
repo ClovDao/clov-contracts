@@ -8,7 +8,7 @@ import { IConditionalTokens } from "../src/interfaces/IConditionalTokens.sol";
 import { IClovOracleAdapter } from "../src/interfaces/IClovOracleAdapter.sol";
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { ERC20 } from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
-import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
+import { IAccessControl } from "@openzeppelin/contracts/access/IAccessControl.sol";
 import { Pausable } from "@openzeppelin/contracts/utils/Pausable.sol";
 
 contract MockERC20 is ERC20 {
@@ -87,11 +87,6 @@ contract MarketFactoryTest is Test {
             abi.encodeWithSelector(IClovOracleAdapter.clearPermissionlessAssertion.selector),
             abi.encode()
         );
-        vm.mockCall(
-            oracleAdapter,
-            abi.encodeWithSelector(IClovOracleAdapter.assertMarketChallenge.selector),
-            abi.encode(bytes32(uint256(1)))
-        );
     }
 
     // ──────────────────────────────────────────────
@@ -105,7 +100,8 @@ contract MarketFactoryTest is Test {
         assertEq(factory.marketResolver(), marketResolver);
         assertEq(factory.creationDeposit(), CREATION_DEPOSIT);
         assertEq(factory.marketCount(), 0);
-        assertEq(factory.owner(), owner);
+        assertTrue(factory.hasRole(factory.OWNER_ROLE(), owner));
+        assertTrue(factory.hasRole(0x00, owner));
     }
 
     function test_constructor_revertsOnZeroAddress() public {
@@ -248,7 +244,11 @@ contract MarketFactoryTest is Test {
 
     function test_pause_onlyOwner() public {
         vm.prank(alice);
-        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, alice));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IAccessControl.AccessControlUnauthorizedAccount.selector, alice, factory.OWNER_ROLE()
+            )
+        );
         factory.pauseMarketCreation();
     }
 
@@ -256,7 +256,11 @@ contract MarketFactoryTest is Test {
         factory.pauseMarketCreation();
 
         vm.prank(alice);
-        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, alice));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IAccessControl.AccessControlUnauthorizedAccount.selector, alice, factory.OWNER_ROLE()
+            )
+        );
         factory.unpauseMarketCreation();
     }
 
@@ -298,7 +302,11 @@ contract MarketFactoryTest is Test {
 
     function test_updateCreationDeposit_onlyOwner() public {
         vm.prank(alice);
-        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, alice));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IAccessControl.AccessControlUnauthorizedAccount.selector, alice, factory.OWNER_ROLE()
+            )
+        );
         factory.updateCreationDeposit(20e6);
     }
 
@@ -512,7 +520,11 @@ contract MarketFactoryTest is Test {
         uint256 marketId = _createDefaultMarket(alice);
 
         vm.prank(alice);
-        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, alice));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IAccessControl.AccessControlUnauthorizedAccount.selector, alice, factory.OWNER_ROLE()
+            )
+        );
         factory.cancelMarket(marketId);
     }
 
@@ -712,8 +724,13 @@ contract MarketFactoryTest is Test {
         usdc.approve(address(factory), amount);
     }
 
+    function _fundChallenger(address who) internal {
+        _fundAndApprove(who, factory.challengeBond());
+    }
+
     function test_challengeMarket_happyPath() public {
         uint256 marketId = _createCommunityMarket(alice);
+        _fundChallenger(bob);
 
         vm.prank(bob);
         factory.challengeMarket(marketId, REASON);
@@ -721,29 +738,49 @@ contract MarketFactoryTest is Test {
         IMarketFactory.MarketExtended memory ext = factory.getMarketExtended(marketId);
         assertEq(uint8(ext.creationStatus), uint8(IMarketFactory.MarketCreationStatus.Challenged));
         assertEq(ext.challenger, bob);
+        assertEq(ext.challengeBond, factory.challengeBond());
+        assertEq(ext.challengeReasonHash, REASON);
     }
 
-    function test_challengeMarket_callsAdapterAssert() public {
+    function test_challengeMarket_clearsPermissionlessAssertion() public {
         uint256 marketId = _createCommunityMarket(alice);
+        _fundChallenger(bob);
 
-        vm.expectCall(oracleAdapter, abi.encodeCall(IClovOracleAdapter.assertMarketChallenge, (marketId, REASON, bob)));
+        vm.expectCall(oracleAdapter, abi.encodeCall(IClovOracleAdapter.clearPermissionlessAssertion, (marketId)));
         vm.prank(bob);
         factory.challengeMarket(marketId, REASON);
     }
 
+    function test_challengeMarket_escrowsBondInFactory() public {
+        uint256 marketId = _createCommunityMarket(alice);
+        uint256 bond = factory.challengeBond();
+        _fundChallenger(bob);
+
+        uint256 factoryBefore = usdc.balanceOf(address(factory));
+        uint256 bobBefore = usdc.balanceOf(bob);
+
+        vm.prank(bob);
+        factory.challengeMarket(marketId, REASON);
+
+        assertEq(usdc.balanceOf(address(factory)), factoryBefore + bond);
+        assertEq(usdc.balanceOf(bob), bobBefore - bond);
+    }
+
     function test_challengeMarket_emitsMarketChallenged() public {
         uint256 marketId = _createCommunityMarket(alice);
+        uint256 bond = factory.challengeBond();
+        _fundChallenger(bob);
 
         vm.expectEmit(true, true, false, true);
-        emit IMarketFactory.MarketChallenged(marketId, bob, REASON);
+        emit IMarketFactory.MarketChallenged(marketId, bob, REASON, bond);
 
         vm.prank(bob);
         factory.challengeMarket(marketId, REASON);
     }
 
     function test_challengeMarket_revertsIfNotCommunityMarket() public {
-        // Featured markets are not challengeable.
         uint256 marketId = _createDefaultMarket(alice);
+        _fundChallenger(bob);
 
         vm.prank(bob);
         vm.expectRevert(abi.encodeWithSelector(IMarketFactory.NotCommunityMarket.selector, marketId));
@@ -752,6 +789,7 @@ contract MarketFactoryTest is Test {
 
     function test_challengeMarket_revertsAfterWindowClosed() public {
         uint256 marketId = _createCommunityMarket(alice);
+        _fundChallenger(bob);
 
         vm.warp(block.timestamp + 48 hours + 1);
 
@@ -762,12 +800,20 @@ contract MarketFactoryTest is Test {
 
     function test_challengeMarket_revertsIfAlreadyChallenged() public {
         uint256 marketId = _createCommunityMarket(alice);
+        _fundChallenger(bob);
         vm.prank(bob);
         factory.challengeMarket(marketId, REASON);
 
         address carol = makeAddr("carol");
+        _fundChallenger(carol);
         vm.prank(carol);
-        vm.expectRevert(IMarketFactory.AlreadyChallenged.selector);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IMarketFactory.InvalidMarketTransition.selector,
+                IMarketFactory.MarketCreationStatus.Challenged,
+                IMarketFactory.MarketCreationStatus.Challenged
+            )
+        );
         factory.challengeMarket(marketId, REASON);
     }
 
@@ -780,6 +826,7 @@ contract MarketFactoryTest is Test {
     function test_challengeMarket_isPermissionless() public {
         uint256 marketId = _createCommunityMarket(alice);
         address anon = makeAddr("anon");
+        _fundChallenger(anon);
 
         vm.prank(anon);
         factory.challengeMarket(marketId, REASON);

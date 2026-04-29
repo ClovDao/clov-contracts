@@ -7,7 +7,7 @@ import { IMarketFactory } from "../src/interfaces/IMarketFactory.sol";
 import { IConditionalTokens } from "../src/interfaces/IConditionalTokens.sol";
 import { IClovOracleAdapter } from "../src/interfaces/IClovOracleAdapter.sol";
 import { ERC20 } from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
-import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
+import { IAccessControl } from "@openzeppelin/contracts/access/IAccessControl.sol";
 
 contract MockERC20 is ERC20 {
     constructor() ERC20("Mock USDC", "USDC") { }
@@ -74,11 +74,6 @@ contract MarketFactoryFuzzTest is Test {
             oracleAdapter,
             abi.encodeWithSelector(IClovOracleAdapter.clearPermissionlessAssertion.selector),
             abi.encode()
-        );
-        vm.mockCall(
-            oracleAdapter,
-            abi.encodeWithSelector(IClovOracleAdapter.assertMarketChallenge.selector),
-            abi.encode(bytes32(uint256(1)))
         );
     }
 
@@ -174,7 +169,11 @@ contract MarketFactoryFuzzTest is Test {
         vm.assume(caller != address(this));
 
         vm.prank(caller);
-        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, caller));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IAccessControl.AccessControlUnauthorizedAccount.selector, caller, factory.OWNER_ROLE()
+            )
+        );
         factory.updateCreationDeposit(20e6);
     }
 
@@ -444,6 +443,13 @@ contract MarketFactoryFuzzTest is Test {
         factory.challengeMarket(marketId, REASON);
     }
 
+    function _fundChallenger(address who) internal {
+        uint256 bond = factory.challengeBond();
+        usdc.mint(who, bond);
+        vm.prank(who);
+        usdc.approve(address(factory), bond);
+    }
+
     function testFuzz_challenge_withinWindowSucceeds(uint256 warpSecs) public {
         address creator = makeAddr("commCreator");
         uint256 marketId = _createCommunity(creator, 72);
@@ -452,6 +458,7 @@ contract MarketFactoryFuzzTest is Test {
         vm.warp(block.timestamp + warpSecs);
 
         address challenger = makeAddr("challenger");
+        _fundChallenger(challenger);
         vm.prank(challenger);
         factory.challengeMarket(marketId, REASON);
 
@@ -468,11 +475,19 @@ contract MarketFactoryFuzzTest is Test {
         uint256 marketId = _createCommunity(creator, 72);
 
         address challenger1 = makeAddr("challenger1");
+        _fundChallenger(challenger1);
         vm.prank(challenger1);
         factory.challengeMarket(marketId, REASON);
 
+        _fundChallenger(challenger2);
         vm.prank(challenger2);
-        vm.expectRevert(IMarketFactory.AlreadyChallenged.selector);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IMarketFactory.InvalidMarketTransition.selector,
+                IMarketFactory.MarketCreationStatus.Challenged,
+                IMarketFactory.MarketCreationStatus.Challenged
+            )
+        );
         factory.challengeMarket(marketId, REASON);
     }
 
@@ -599,7 +614,11 @@ contract MarketFactoryFuzzTest is Test {
         vm.assume(caller != address(this));
 
         vm.prank(caller);
-        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, caller));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IAccessControl.AccessControlUnauthorizedAccount.selector, caller, factory.OWNER_ROLE()
+            )
+        );
         factory.updateCommunityCreationDeposit(100e6);
     }
 

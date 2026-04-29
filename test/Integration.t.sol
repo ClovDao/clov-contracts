@@ -67,7 +67,6 @@ contract IntegrationTest is Test {
 
     uint256 public constant CREATION_DEPOSIT = 10e6; // 10 USDC
     uint256 public constant BOND_AMOUNT = 1000e6; // 1000 USDC
-    uint256 public constant CHALLENGE_BOND_AMOUNT = 500e6; // 500 USDC
     uint64 public constant ASSERTION_LIVENESS = 7200; // 2 hours
     bytes32 public constant DEFAULT_IDENTIFIER = keccak256("ASSERT_TRUTH");
     bytes32 public constant MOCK_CONDITION_ID = keccak256("integration-condition-0");
@@ -116,8 +115,7 @@ contract IntegrationTest is Test {
         // ── Deploy real Clov contracts (staged with initialize) ──
         factory = new MarketFactory(address(usdc), conditionalTokens, ctfExchange, CREATION_DEPOSIT);
 
-        oracleAdapter =
-            new ClovOracleAdapter(umaOracle, address(usdc), BOND_AMOUNT, CHALLENGE_BOND_AMOUNT, ASSERTION_LIVENESS);
+        oracleAdapter = new ClovOracleAdapter(umaOracle, address(usdc), BOND_AMOUNT, ASSERTION_LIVENESS);
 
         resolver = new MarketResolver(conditionalTokens);
 

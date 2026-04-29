@@ -386,7 +386,6 @@ contract MarketInvariants is StdInvariant, Test {
 
     uint256 public constant CREATION_DEPOSIT = 10e6;
     uint256 public constant BOND_AMOUNT = 1000e6;
-    uint256 public constant CHALLENGE_BOND_AMOUNT = 500e6;
     uint64 public constant ASSERTION_LIVENESS = 7200;
     bytes32 public constant DEFAULT_IDENTIFIER = keccak256("ASSERT_TRUTH");
     bytes32 public constant MOCK_CONDITION_ID = keccak256("inv-condition");
@@ -426,8 +425,7 @@ contract MarketInvariants is StdInvariant, Test {
         // ── Deploy real contracts (staged with initialize) ──
         factory = new MarketFactory(address(usdc), conditionalTokens, ctfExchange, CREATION_DEPOSIT);
 
-        oracleAdapter =
-            new ClovOracleAdapter(umaOracle, address(usdc), BOND_AMOUNT, CHALLENGE_BOND_AMOUNT, ASSERTION_LIVENESS);
+        oracleAdapter = new ClovOracleAdapter(umaOracle, address(usdc), BOND_AMOUNT, ASSERTION_LIVENESS);
 
         resolver = new MarketResolver(conditionalTokens);
 
