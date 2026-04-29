@@ -25,10 +25,13 @@ interface IClovOracleAdapter {
     /// @notice Emitted when the permissionless-assertion flag is cleared (challenge, cancel).
     event PermissionlessAssertionCleared(uint256 indexed marketId);
 
-    /// @notice Emitted when a Community market challenge is asserted on UMA.
-    event MarketChallengeAsserted(
-        uint256 indexed marketId, bytes32 indexed assertionId, address indexed asserter, bytes32 reasonIpfsHash
+    /// @notice Emitted when a Community-market admin Layer 1 decision is escalated to UMA.
+    event EscalationAsserted(
+        uint256 indexed marketId, bytes32 indexed assertionId, address indexed asserter, bytes32 reasonHash
     );
+
+    /// @notice Emitted when the owner-tunable UMA bond amount is updated.
+    event BondAmountUpdated(uint256 oldValue, uint256 newValue);
 
     function assertOutcome(uint256 marketId, bool outcome, address asserter) external returns (bytes32 assertionId);
 
@@ -43,12 +46,16 @@ interface IClovOracleAdapter {
     /// @notice View: whether a market is currently flagged for permissionless assertion.
     function isPermissionlessAssertion(uint256 marketId) external view returns (bool);
 
-    /// @notice Factory-only entrypoint to open an UMA assertion disputing a Community market's
-    ///         validity. Pulls `CHALLENGE_BOND_AMOUNT` USDC from `asserter` and calls
-    ///         `assertTruth` on UMA. Callback routes back into the factory.
-    function assertMarketChallenge(uint256 marketId, bytes32 reasonIpfsHash, address asserter)
+    /// @notice Factory-only entrypoint to open a UMA assertion contesting an admin Layer 1 decision
+    ///         on a Community market. Pulls the UMA bond (`bondAmount`) USDC from `asserter` and
+    ///         calls `assertTruth`. The callback routes back into the factory via
+    ///         `onEscalationUpheld` or `onEscalationRejected`.
+    function assertEscalatedChallenge(uint256 marketId, bytes32 reasonHash, address asserter)
         external
         returns (bytes32 assertionId);
+
+    /// @notice Owner-only: update the UMA bond required for outcome and escalation assertions.
+    function setBondAmount(uint256 newBond) external;
 
     function assertionResolvedCallback(bytes32 assertionId, bool assertedTruthfully) external;
 

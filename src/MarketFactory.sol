@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.24;
 
-import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
+import { AccessControl } from "@openzeppelin/contracts/access/AccessControl.sol";
 import { Pausable } from "@openzeppelin/contracts/utils/Pausable.sol";
 import { ReentrancyGuard } from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
@@ -18,11 +18,29 @@ interface ICTFExchangeRegistry {
 }
 
 /// @title MarketFactory
-/// @notice Factory contract for creating and managing prediction markets
-/// @dev Uses Gnosis Conditional Tokens for outcome tracking. Trading is handled
-///      externally by a CLOB (CTF Exchange), not by this contract.
-contract MarketFactory is IMarketFactory, Ownable, Pausable, ReentrancyGuard {
+/// @notice Factory contract for creating and managing prediction markets.
+/// @dev    Uses Gnosis Conditional Tokens for outcome tracking. Trading is handled
+///         externally by a CLOB (CTF Exchange), not by this contract.
+///
+///         Community-market disputes follow a two-layer flow:
+///         - Layer 1: anyone may post a USDC bond (`challengeBond`) to challenge a market in its
+///           48h window. The bond is escrowed inside this contract. A RESOLVER_ROLE admin
+///           adjudicates within the SLA via `resolveChallengeUpheld` / `resolveChallengeRejected`.
+///         - Layer 2 (optional): the loser of the admin decision (creator or challenger) may
+///           escalate the case to UMA OptimisticOracleV3 within a 24h cooldown by calling
+///           `escalateToUma`. The adapter pulls a separate UMA bond directly from the escalator.
+contract MarketFactory is IMarketFactory, AccessControl, Pausable, ReentrancyGuard {
     using SafeERC20 for IERC20;
+
+    // ──────────────────────────────────────────────
+    // Roles
+    // ──────────────────────────────────────────────
+
+    /// @notice Owner: can pause, tune bonds, cancel markets, and manage roles.
+    bytes32 public constant OWNER_ROLE = keccak256("OWNER_ROLE");
+
+    /// @notice Resolver: adjudicates Layer 1 community-market challenges.
+    bytes32 public constant RESOLVER_ROLE = keccak256("RESOLVER_ROLE");
 
     // ──────────────────────────────────────────────
     // Custom Errors
@@ -44,6 +62,13 @@ contract MarketFactory is IMarketFactory, Ownable, Pausable, ReentrancyGuard {
 
     /// @notice Challenge window for Community markets: 48 hours from creation.
     uint256 public constant CHALLENGE_PERIOD = 48 hours;
+
+    /// @notice Re-arm window after an admin rejects a challenge, and the cooldown during
+    ///         which the loser of an admin Layer 1 decision may still escalate to UMA.
+    uint256 public constant POST_RESOLUTION_PERIOD = 24 hours;
+
+    /// @notice Default per-market challenge bond — 50 USDC (6 decimals).
+    uint256 public constant DEFAULT_CHALLENGE_BOND = 50e6;
 
     /// @notice Basis-points denominator (10_000 = 100%). Retained for off-chain callers.
     uint256 public constant BPS_DENOMINATOR = 10_000;
@@ -67,15 +92,19 @@ contract MarketFactory is IMarketFactory, Ownable, Pausable, ReentrancyGuard {
     address public marketResolver;
 
     // ──────────────────────────────────────────────
-    // Configuration
+    // Configuration (mutable, owner-tunable)
     // ──────────────────────────────────────────────
 
-    /// @notice Anti-spam deposit required to create a market (in collateral token units)
+    /// @notice Anti-spam deposit required to create a Featured market (in collateral token units).
     uint256 public creationDeposit;
 
     /// @notice Anti-spam deposit required to create a Community-tier market.
-    ///         Defaults to 50 USDC; changeable by owner via updateCommunityCreationDeposit.
+    ///         Defaults to 50 USDC.
     uint256 public communityCreationDeposit = 50e6;
+
+    /// @notice Per-challenge USDC bond required from a challenger of a Community market.
+    ///         Held in internal escrow until adjudicated.
+    uint256 public challengeBond;
 
     // ──────────────────────────────────────────────
     // Market State
@@ -97,9 +126,7 @@ contract MarketFactory is IMarketFactory, Ownable, Pausable, ReentrancyGuard {
     // Constructor
     // ──────────────────────────────────────────────
 
-    constructor(address _collateralToken, address _conditionalTokens, address _ctfExchange, uint256 _creationDeposit)
-        Ownable(msg.sender)
-    {
+    constructor(address _collateralToken, address _conditionalTokens, address _ctfExchange, uint256 _creationDeposit) {
         if (_collateralToken == address(0) || _conditionalTokens == address(0) || _ctfExchange == address(0)) {
             revert ZeroAddress();
         }
@@ -112,12 +139,18 @@ contract MarketFactory is IMarketFactory, Ownable, Pausable, ReentrancyGuard {
         conditionalTokens = IConditionalTokens(_conditionalTokens);
         ctfExchange = ICTFExchangeRegistry(_ctfExchange);
         creationDeposit = _creationDeposit;
+        challengeBond = DEFAULT_CHALLENGE_BOND;
+
+        // Deployer bootstraps both admin and owner roles. Deployment scripts may
+        // hand off OWNER_ROLE to a multisig / timelock and renounce DEFAULT_ADMIN_ROLE.
+        _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
+        _grantRole(OWNER_ROLE, msg.sender);
     }
 
     /// @notice One-time initialization of cross-references (resolves circular dependency)
     /// @param _oracleAdapter Address of the ClovOracleAdapter
     /// @param _marketResolver Address of the MarketResolver
-    function initialize(address _oracleAdapter, address _marketResolver) external onlyOwner {
+    function initialize(address _oracleAdapter, address _marketResolver) external onlyRole(OWNER_ROLE) {
         if (oracleAdapter != address(0) || marketResolver != address(0)) {
             revert AlreadyInitialized();
         }
@@ -147,13 +180,9 @@ contract MarketFactory is IMarketFactory, Ownable, Pausable, ReentrancyGuard {
         );
 
         // Populate extended state for Featured tier (Active, no challenge window).
-        _extendedData[marketId] = MarketExtended({
-            tier: MarketTier.Featured,
-            creationStatus: MarketCreationStatus.Active,
-            challengeDeadline: 0,
-            challenger: address(0),
-            creatorFeeAccumulated: 0
-        });
+        MarketExtended storage ext = _extendedData[marketId];
+        ext.tier = MarketTier.Featured;
+        ext.creationStatus = MarketCreationStatus.Active;
 
         _registerTokensOnExchange(conditionId);
 
@@ -176,13 +205,10 @@ contract MarketFactory is IMarketFactory, Ownable, Pausable, ReentrancyGuard {
             _createMarketInternal(metadataURI, resolutionTimestamp, category, deposit, MarketStatus.Created);
 
         uint256 deadline = block.timestamp + CHALLENGE_PERIOD;
-        _extendedData[marketId] = MarketExtended({
-            tier: MarketTier.Community,
-            creationStatus: MarketCreationStatus.Pending,
-            challengeDeadline: deadline,
-            challenger: address(0),
-            creatorFeeAccumulated: 0
-        });
+        MarketExtended storage ext = _extendedData[marketId];
+        ext.tier = MarketTier.Community;
+        ext.creationStatus = MarketCreationStatus.Pending;
+        ext.challengeDeadline = deadline;
 
         // Community markets bypass the asserter allowlist so outcome resolution is
         // permissionless. Flag is cleared on challenge or cancel.
@@ -250,23 +276,52 @@ contract MarketFactory is IMarketFactory, Ownable, Pausable, ReentrancyGuard {
     // ──────────────────────────────────────────────
 
     /// @inheritdoc IMarketFactory
-    function pauseMarketCreation() external override onlyOwner {
+    function pauseMarketCreation() external override onlyRole(OWNER_ROLE) {
         _pause();
     }
 
     /// @inheritdoc IMarketFactory
-    function unpauseMarketCreation() external override onlyOwner {
+    function unpauseMarketCreation() external override onlyRole(OWNER_ROLE) {
         _unpause();
     }
 
     /// @inheritdoc IMarketFactory
-    function updateCreationDeposit(uint256 newDeposit) external override onlyOwner {
+    function updateCreationDeposit(uint256 newDeposit) external override onlyRole(OWNER_ROLE) {
         if (newDeposit < MIN_CREATION_DEPOSIT) {
             revert DepositBelowMinimum(newDeposit, MIN_CREATION_DEPOSIT);
         }
         uint256 oldDeposit = creationDeposit;
         creationDeposit = newDeposit;
         emit CreationDepositUpdated(oldDeposit, newDeposit);
+    }
+
+    /// @inheritdoc IMarketFactory
+    /// @dev Alias of `updateCreationDeposit` exposing the unified `BondParamUpdated` telemetry
+    ///      event used for off-chain bond-parameter dashboards.
+    function setCreationDeposit(uint256 newDeposit) external override onlyRole(OWNER_ROLE) {
+        if (newDeposit < MIN_CREATION_DEPOSIT) {
+            revert DepositBelowMinimum(newDeposit, MIN_CREATION_DEPOSIT);
+        }
+        uint256 oldDeposit = creationDeposit;
+        creationDeposit = newDeposit;
+        emit BondParamUpdated(keccak256("creationDeposit"), oldDeposit, newDeposit);
+    }
+
+    /// @inheritdoc IMarketFactory
+    function setCommunityCreationDeposit(uint256 newDeposit) external override onlyRole(OWNER_ROLE) {
+        if (newDeposit < MIN_CREATION_DEPOSIT) {
+            revert DepositBelowMinimum(newDeposit, MIN_CREATION_DEPOSIT);
+        }
+        uint256 oldDeposit = communityCreationDeposit;
+        communityCreationDeposit = newDeposit;
+        emit BondParamUpdated(keccak256("communityCreationDeposit"), oldDeposit, newDeposit);
+    }
+
+    /// @inheritdoc IMarketFactory
+    function setChallengeBond(uint256 newBond) external override onlyRole(OWNER_ROLE) {
+        uint256 oldBond = challengeBond;
+        challengeBond = newBond;
+        emit BondParamUpdated(keccak256("challengeBond"), oldBond, newBond);
     }
 
     /// @inheritdoc IMarketFactory
@@ -285,21 +340,26 @@ contract MarketFactory is IMarketFactory, Ownable, Pausable, ReentrancyGuard {
     }
 
     /// @notice Emergency cancel a market — returns deposits, prevents further trading
-    /// @dev Only callable by the contract owner. Validates state transition via _isValidTransition.
+    /// @dev Only callable by OWNER_ROLE. Validates state transition via _isValidTransition.
+    ///      Forbids cancelling a community market while a Layer 1 challenge is pending or
+    ///      escalated; admin must adjudicate / await UMA settlement first.
     /// @param marketId The ID of the market to cancel
-    function cancelMarket(uint256 marketId) external override onlyOwner {
+    function cancelMarket(uint256 marketId) external override onlyRole(OWNER_ROLE) {
         MarketData storage m = markets[marketId];
 
         if (m.creator == address(0)) {
             revert MarketDoesNotExist(marketId);
         }
 
-        // Forbid cancelling a community market while a UMA challenge is in flight.
-        // Cancelling mid-challenge would leave the creationDeposit claimable by the
-        // creator via refundCreationDeposit, robbing the challenger of their reward.
-        // Admin must wait for UMA resolution (onChallengeUpheld / onChallengeRejected).
+        // Forbid cancelling a community market while a challenge is in flight (admin pending
+        // or already escalated to UMA). Admin must adjudicate first; otherwise the bond
+        // accounting between creator/challenger would be ambiguous.
         MarketExtended storage extRef = _extendedData[marketId];
-        if (extRef.tier == MarketTier.Community && extRef.creationStatus == MarketCreationStatus.Challenged) {
+        if (
+            extRef.tier == MarketTier.Community
+                && (extRef.creationStatus == MarketCreationStatus.Challenged
+                    || extRef.creationStatus == MarketCreationStatus.EscalatedToUma)
+        ) {
             revert InvalidMarketTransition(extRef.creationStatus, MarketCreationStatus.Cancelled);
         }
 
@@ -384,20 +444,18 @@ contract MarketFactory is IMarketFactory, Ownable, Pausable, ReentrancyGuard {
     }
 
     // ──────────────────────────────────────────────
-    // Community Markets — Challenge / Activate / Callbacks
+    // Community Markets — Layer 1 Challenge
     // ──────────────────────────────────────────────
 
     /// @inheritdoc IMarketFactory
-    /// @dev Permissionless. The challenger's USDC bond is pulled directly by the oracle adapter
-    ///      and escrowed on UMA — no bond is held in this contract.
+    /// @dev Permissionless. The challenger's USDC bond is escrowed inside this contract until a
+    ///      RESOLVER_ROLE admin adjudicates. There is NO call to UMA at this stage — the UMA path
+    ///      is reserved for the Layer 2 escalation flow (`escalateToUma`).
     function challengeMarket(uint256 marketId, bytes32 reasonIpfsHash) external override nonReentrant {
         MarketExtended storage ext = _extendedData[marketId];
 
         if (ext.tier != MarketTier.Community) {
             revert NotCommunityMarket(marketId);
-        }
-        if (ext.creationStatus == MarketCreationStatus.Challenged) {
-            revert AlreadyChallenged();
         }
         if (ext.creationStatus != MarketCreationStatus.Pending) {
             revert InvalidMarketTransition(ext.creationStatus, MarketCreationStatus.Challenged);
@@ -406,62 +464,186 @@ contract MarketFactory is IMarketFactory, Ownable, Pausable, ReentrancyGuard {
             revert ChallengeWindowClosed();
         }
 
+        uint256 bond = challengeBond;
+
         ext.creationStatus = MarketCreationStatus.Challenged;
         ext.challenger = msg.sender;
+        ext.challengeBond = bond;
+        ext.challengeReasonHash = reasonIpfsHash;
+
+        // Pull the bond into internal escrow (NOT to UMA).
+        collateralToken.safeTransferFrom(msg.sender, address(this), bond);
 
         // Dispute in flight — revoke permissionless asserting until resolution.
-        IClovOracleAdapter adapter = IClovOracleAdapter(oracleAdapter);
-        adapter.clearPermissionlessAssertion(marketId);
+        IClovOracleAdapter(oracleAdapter).clearPermissionlessAssertion(marketId);
 
-        // Adapter pulls the UMA bond from the challenger and opens the assertion.
-        adapter.assertMarketChallenge(marketId, reasonIpfsHash, msg.sender);
-
-        emit MarketChallenged(marketId, msg.sender, reasonIpfsHash);
+        emit MarketChallenged(marketId, msg.sender, reasonIpfsHash, bond);
     }
 
     /// @inheritdoc IMarketFactory
-    function onChallengeUpheld(uint256 marketId) external override nonReentrant {
+    /// @dev RESOLVER_ROLE only. Admin found the challenge valid: market is cancelled and the
+    ///      challenger receives the creation deposit + their bond back. The 24h `resolutionDeadline`
+    ///      gives the creator a chance to escalate the decision to UMA.
+    function resolveChallengeUpheld(uint256 marketId, bytes32 reasonHash)
+        external
+        override
+        onlyRole(RESOLVER_ROLE)
+        nonReentrant
+    {
+        MarketExtended storage ext = _extendedData[marketId];
+        if (ext.creationStatus != MarketCreationStatus.Challenged) {
+            revert InvalidMarketTransition(ext.creationStatus, MarketCreationStatus.Cancelled);
+        }
+
+        MarketData storage m = markets[marketId];
+        address challenger = ext.challenger;
+        uint256 deposit = m.creationDeposit;
+        uint256 chBond = ext.challengeBond;
+
+        ext.creationStatus = MarketCreationStatus.Cancelled;
+        m.status = MarketStatus.Cancelled;
+        m.creationDeposit = 0;
+        ext.challengeBond = 0;
+        ext.resolutionDeadline = block.timestamp + POST_RESOLUTION_PERIOD;
+
+        uint256 payout = deposit + chBond;
+        if (payout > 0 && challenger != address(0)) {
+            collateralToken.safeTransfer(challenger, payout);
+        }
+
+        emit ChallengeResolved(marketId, true, reasonHash, challenger);
+        emit MarketCancelled(marketId, challenger);
+        emit MarketStatusChanged(marketId, MarketStatus.Cancelled);
+    }
+
+    /// @inheritdoc IMarketFactory
+    /// @dev RESOLVER_ROLE only. Admin found the challenge invalid: the challenger's bond is
+    ///      forfeited to the market creator (slashing) and the market is re-armed for a 24h
+    ///      window (NOT a fresh 48h) so a different party may file a fresh challenge. The
+    ///      original challenger keeps standing on `ext.challenger` for the same 24h to
+    ///      optionally escalate the admin decision to UMA.
+    function resolveChallengeRejected(uint256 marketId, bytes32 reasonHash)
+        external
+        override
+        onlyRole(RESOLVER_ROLE)
+        nonReentrant
+    {
+        MarketExtended storage ext = _extendedData[marketId];
+        if (ext.creationStatus != MarketCreationStatus.Challenged) {
+            revert InvalidMarketTransition(ext.creationStatus, MarketCreationStatus.Pending);
+        }
+
+        address creator = markets[marketId].creator;
+        uint256 chBond = ext.challengeBond;
+
+        ext.creationStatus = MarketCreationStatus.Pending;
+        ext.challengeBond = 0;
+        ext.resolutionDeadline = block.timestamp + POST_RESOLUTION_PERIOD;
+        ext.challengeDeadline = block.timestamp + POST_RESOLUTION_PERIOD;
+
+        if (chBond > 0 && creator != address(0)) {
+            collateralToken.safeTransfer(creator, chBond);
+        }
+
+        // Restore permissionless assertion path for outcome resolution.
+        IClovOracleAdapter(oracleAdapter).setPermissionlessAssertion(marketId);
+
+        emit ChallengeResolved(marketId, false, reasonHash, creator);
+    }
+
+    // ──────────────────────────────────────────────
+    // Community Markets — Layer 2 UMA Escalation
+    // ──────────────────────────────────────────────
+
+    /// @inheritdoc IMarketFactory
+    /// @dev Standing: only the market creator or original challenger may call. Cooldown:
+    ///      callable only within `POST_RESOLUTION_PERIOD` of an admin decision (Cancelled or
+    ///      Pending). Escalation before an admin acts is forbidden so the L1 escrow has a
+    ///      single, well-defined disbursement path. One-shot per market (`escalated`).
+    ///
+    ///      UX note: the caller must have approved the oracle adapter (NOT this factory)
+    ///      for the UMA bond, since the adapter pulls it directly via
+    ///      `assertEscalatedChallenge`. The factory does not move the UMA bond itself.
+    function escalateToUma(uint256 marketId) external override nonReentrant {
+        MarketExtended storage ext = _extendedData[marketId];
+
+        if (ext.escalated) revert AlreadyEscalated();
+
+        if (msg.sender != markets[marketId].creator && msg.sender != ext.challenger) {
+            revert NotEligibleToEscalate(msg.sender);
+        }
+
+        // Only escalable post-admin: state must be Cancelled (admin upheld) or Pending (admin
+        // rejected) AND we must still be within the 24h cooldown.
+        bool inPostResolution =
+            (ext.creationStatus == MarketCreationStatus.Cancelled || ext.creationStatus == MarketCreationStatus.Pending)
+                && block.timestamp <= ext.resolutionDeadline;
+        if (!inPostResolution) {
+            revert EscalationWindowClosed();
+        }
+
+        ext.escalated = true;
+        ext.escalator = msg.sender;
+        ext.creationStatus = MarketCreationStatus.EscalatedToUma;
+
+        IClovOracleAdapter(oracleAdapter).assertEscalatedChallenge(marketId, ext.challengeReasonHash, msg.sender);
+
+        emit EscalatedToUma(marketId, msg.sender);
+    }
+
+    /// @inheritdoc IMarketFactory
+    /// @dev Adapter-only callback. Escalator's claim "the admin Layer 1 decision is wrong" was
+    ///      upheld by UMA. We finalize the market state machine to the position that reflects
+    ///      the escalator's side winning. Layer 1 USDC was already disbursed at admin
+    ///      resolution time; the UMA bond (held inside UMA OOV3) is redistributed by UMA itself,
+    ///      not by this hook.
+    function onEscalationUpheld(uint256 marketId) external override nonReentrant {
         if (msg.sender != oracleAdapter) {
             revert OnlyOracleAdapter(msg.sender);
         }
 
         MarketExtended storage ext = _extendedData[marketId];
         MarketData storage m = markets[marketId];
-        address challenger = ext.challenger;
-        uint256 deposit = m.creationDeposit;
 
-        // Move market to Cancelled (business status) and mark Community lifecycle Cancelled.
-        ext.creationStatus = MarketCreationStatus.Cancelled;
-        m.status = MarketStatus.Cancelled;
-        m.creationDeposit = 0;
-
-        if (deposit > 0 && challenger != address(0)) {
-            collateralToken.safeTransfer(challenger, deposit);
+        if (ext.escalator == m.creator) {
+            // Admin had upheld the challenge (cancelled the market) but UMA reverses that:
+            // the creator's market is reinstated to Pending so it can be re-armed/activated.
+            ext.creationStatus = MarketCreationStatus.Pending;
+            m.status = MarketStatus.Created;
+            // Re-arm a short challenge window so the chain state is consistent with a re-opened market.
+            ext.challengeDeadline = block.timestamp + POST_RESOLUTION_PERIOD;
+            IClovOracleAdapter(oracleAdapter).setPermissionlessAssertion(marketId);
+        } else {
+            // Admin had rejected the challenge; UMA reverses → market is cancelled.
+            ext.creationStatus = MarketCreationStatus.Cancelled;
+            m.status = MarketStatus.Cancelled;
+            emit MarketCancelled(marketId, ext.challenger);
+            emit MarketStatusChanged(marketId, MarketStatus.Cancelled);
         }
-
-        emit ChallengeUpheld(marketId, challenger, deposit);
-        emit MarketCancelled(marketId, challenger);
-        emit MarketStatusChanged(marketId, MarketStatus.Cancelled);
     }
 
     /// @inheritdoc IMarketFactory
-    function onChallengeRejected(uint256 marketId) external override nonReentrant {
+    /// @dev Adapter-only callback. UMA rejected the escalation → admin decision stands. We
+    ///      restore the market lifecycle state that the admin decision implied (Cancelled or
+    ///      Pending) so downstream consumers see a consistent terminal state.
+    function onEscalationRejected(uint256 marketId) external override nonReentrant {
         if (msg.sender != oracleAdapter) {
             revert OnlyOracleAdapter(msg.sender);
         }
 
         MarketExtended storage ext = _extendedData[marketId];
+        MarketData storage m = markets[marketId];
 
-        ext.creationStatus = MarketCreationStatus.Pending;
-        ext.challenger = address(0);
-
-        uint256 newDeadline = block.timestamp + CHALLENGE_PERIOD;
-        ext.challengeDeadline = newDeadline;
-
-        // Restore permissionless assertion path so outcome resolution can resume post-activation.
-        IClovOracleAdapter(oracleAdapter).setPermissionlessAssertion(marketId);
-
-        emit ChallengeRejected(marketId, newDeadline);
+        if (ext.escalator == m.creator) {
+            // Creator escalated against an admin upheld → admin decision (cancelled) stands.
+            ext.creationStatus = MarketCreationStatus.Cancelled;
+            m.status = MarketStatus.Cancelled;
+        } else {
+            // Challenger escalated against an admin rejection → admin decision (pending) stands.
+            ext.creationStatus = MarketCreationStatus.Pending;
+            // Leave business status alone (still Created); activateMarket can promote later.
+            IClovOracleAdapter(oracleAdapter).setPermissionlessAssertion(marketId);
+        }
     }
 
     /// @inheritdoc IMarketFactory
@@ -538,7 +720,7 @@ contract MarketFactory is IMarketFactory, Ownable, Pausable, ReentrancyGuard {
     }
 
     /// @inheritdoc IMarketFactory
-    function updateCommunityCreationDeposit(uint256 newDeposit) external override onlyOwner {
+    function updateCommunityCreationDeposit(uint256 newDeposit) external override onlyRole(OWNER_ROLE) {
         if (newDeposit < MIN_CREATION_DEPOSIT) {
             revert DepositBelowMinimum(newDeposit, MIN_CREATION_DEPOSIT);
         }

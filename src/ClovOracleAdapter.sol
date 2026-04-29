@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.24;
 
-import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
+import { AccessControl } from "@openzeppelin/contracts/access/AccessControl.sol";
 import { Pausable } from "@openzeppelin/contracts/utils/Pausable.sol";
 import { ReentrancyGuard } from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
@@ -13,13 +13,21 @@ import { IMarketResolver } from "./interfaces/IMarketResolver.sol";
 
 /// @title ClovOracleAdapter
 /// @notice Bridges Clov prediction markets with UMA Optimistic Oracle V3 for outcome resolution
-///         and Community-market challenge disputes.
-/// @dev Manages two assertion lifecycles:
-///      - **Outcome** assertions: `assertOutcome` → UMA → `assertionResolvedCallback` → resolver.
-///      - **Challenge** assertions: `assertMarketChallenge` (factory-only) → UMA →
-///        callback routes into `MarketFactory.onChallengeUpheld / onChallengeRejected`.
-contract ClovOracleAdapter is IClovOracleAdapter, Ownable, Pausable, ReentrancyGuard {
+///         and Community-market Layer 2 escalation disputes.
+/// @dev    Manages two assertion lifecycles:
+///         - **Outcome** assertions: `assertOutcome` → UMA → `assertionResolvedCallback` → resolver.
+///         - **Escalation** assertions: `assertEscalatedChallenge` (factory-only) → UMA → callback
+///           routes into `MarketFactory.onEscalationUpheld / onEscalationRejected`.
+///         The Layer 1 challenge flow is escrowed inside `MarketFactory` and never touches UMA.
+contract ClovOracleAdapter is IClovOracleAdapter, AccessControl, Pausable, ReentrancyGuard {
     using SafeERC20 for IERC20;
+
+    // ──────────────────────────────────────────────
+    // Roles
+    // ──────────────────────────────────────────────
+
+    /// @notice Owner role: tunes bond amounts, manages asserter allowlist, pauses.
+    bytes32 public constant OWNER_ROLE = keccak256("OWNER_ROLE");
 
     // ──────────────────────────────────────────────
     // Custom Errors
@@ -38,11 +46,11 @@ contract ClovOracleAdapter is IClovOracleAdapter, Ownable, Pausable, ReentrancyG
     error UnauthorizedAsserter(address caller);
 
     /// @notice Thrown when a non-MarketFactory caller tries to mutate per-market flags
-    ///         or open a challenge assertion.
+    ///         or open an escalation assertion.
     error OnlyMarketFactory(address caller);
 
-    /// @notice Thrown when a challenge is requested for a market that already has a live challenge.
-    error ChallengeAlreadyAsserted(uint256 marketId);
+    /// @notice Thrown when an escalation is requested for a market that already has a live one.
+    error EscalationAlreadyAsserted(uint256 marketId);
 
     // ──────────────────────────────────────────────
     // Events
@@ -72,12 +80,8 @@ contract ClovOracleAdapter is IClovOracleAdapter, Ownable, Pausable, ReentrancyG
     // Configuration
     // ──────────────────────────────────────────────
 
-    /// @notice Bond amount required for UMA outcome assertions
-    uint256 public immutable bondAmount;
-
-    /// @notice Bond amount required for UMA challenge assertions. Set at deploy time
-    ///         and held by UMA, not the factory.
-    uint256 public immutable challengeBondAmount;
+    /// @notice Bond amount required for UMA outcome and escalation assertions. Owner-tunable.
+    uint256 public bondAmount;
 
     /// @notice Dispute window duration in seconds
     uint64 public immutable assertionLiveness;
@@ -95,16 +99,16 @@ contract ClovOracleAdapter is IClovOracleAdapter, Ownable, Pausable, ReentrancyG
     /// @notice marketId => active outcome assertionId
     mapping(uint256 => bytes32) public marketToAssertion;
 
-    /// @notice assertionId => marketId for Community-market challenge assertions.
-    ///         Lets `assertionResolvedCallback` branch between outcome and challenge paths.
-    /// @dev Read with `isChallengeAssertion` to disambiguate marketId==0 from "not a challenge".
-    mapping(bytes32 => uint256) public challengeAssertions;
+    /// @notice assertionId => marketId for Community-market Layer 2 escalation assertions.
+    ///         Lets `assertionResolvedCallback` branch between outcome and escalation paths.
+    /// @dev    Read with `isEscalationAssertion` to disambiguate marketId==0 from "not an escalation".
+    mapping(bytes32 => uint256) public escalationAssertions;
 
-    /// @notice assertionId => true if this is a challenge assertion (vs outcome).
-    mapping(bytes32 => bool) public isChallengeAssertion;
+    /// @notice assertionId => true if this is an escalation assertion (vs outcome).
+    mapping(bytes32 => bool) public isEscalationAssertion;
 
-    /// @notice marketId => active challenge assertionId (bytes32(0) when none in flight).
-    mapping(uint256 => bytes32) public marketToChallengeAssertion;
+    /// @notice marketId => active escalation assertionId (bytes32(0) when none in flight).
+    mapping(uint256 => bytes32) public marketToEscalationAssertion;
 
     /// @notice Tracks addresses allowed to call assertOutcome
     mapping(address => bool) public allowedAsserters;
@@ -117,13 +121,7 @@ contract ClovOracleAdapter is IClovOracleAdapter, Ownable, Pausable, ReentrancyG
     // Constructor
     // ──────────────────────────────────────────────
 
-    constructor(
-        address _umaOracle,
-        address _bondToken,
-        uint256 _bondAmount,
-        uint256 _challengeBondAmount,
-        uint64 _assertionLiveness
-    ) Ownable(msg.sender) {
+    constructor(address _umaOracle, address _bondToken, uint256 _bondAmount, uint64 _assertionLiveness) {
         if (_umaOracle == address(0) || _bondToken == address(0)) {
             revert ZeroAddress();
         }
@@ -131,15 +129,17 @@ contract ClovOracleAdapter is IClovOracleAdapter, Ownable, Pausable, ReentrancyG
         umaOracle = IOptimisticOracleV3(_umaOracle);
         bondToken = IERC20(_bondToken);
         bondAmount = _bondAmount;
-        challengeBondAmount = _challengeBondAmount;
         assertionLiveness = _assertionLiveness;
         defaultIdentifier = umaOracle.defaultIdentifier();
+
+        _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
+        _grantRole(OWNER_ROLE, msg.sender);
     }
 
     /// @notice One-time initialization of cross-references (resolves circular dependency)
     /// @param _marketFactory Address of the MarketFactory
     /// @param _marketResolver Address of the MarketResolver
-    function initialize(address _marketFactory, address _marketResolver) external onlyOwner {
+    function initialize(address _marketFactory, address _marketResolver) external onlyRole(OWNER_ROLE) {
         if (address(marketFactory) != address(0) || address(marketResolver) != address(0)) {
             revert AlreadyInitialized();
         }
@@ -232,14 +232,15 @@ contract ClovOracleAdapter is IClovOracleAdapter, Ownable, Pausable, ReentrancyG
     }
 
     // ──────────────────────────────────────────────
-    // Assert Challenge
+    // Layer 2 Escalation
     // ──────────────────────────────────────────────
 
     /// @inheritdoc IClovOracleAdapter
-    /// @dev Only callable by the MarketFactory. Pulls `challengeBondAmount` USDC from
-    ///      `asserter` (the challenger) and opens an UMA assertion. The UMA callback
-    ///      resolves back into the factory via `onChallengeUpheld` / `onChallengeRejected`.
-    function assertMarketChallenge(uint256 marketId, bytes32 reasonIpfsHash, address asserter)
+    /// @dev Only callable by the MarketFactory. Pulls `bondAmount` USDC from `asserter`
+    ///      (the escalator) and opens a UMA assertion claiming the admin Layer 1 decision
+    ///      should be overturned. The UMA callback resolves back into the factory via
+    ///      `onEscalationUpheld` / `onEscalationRejected`.
+    function assertEscalatedChallenge(uint256 marketId, bytes32 reasonHash, address asserter)
         external
         override
         whenNotPaused
@@ -249,15 +250,18 @@ contract ClovOracleAdapter is IClovOracleAdapter, Ownable, Pausable, ReentrancyG
         if (msg.sender != address(marketFactory)) {
             revert OnlyMarketFactory(msg.sender);
         }
-        if (marketToChallengeAssertion[marketId] != bytes32(0)) {
-            revert ChallengeAlreadyAsserted(marketId);
+        if (marketToEscalationAssertion[marketId] != bytes32(0)) {
+            revert EscalationAlreadyAsserted(marketId);
         }
 
-        bondToken.safeTransferFrom(asserter, address(this), challengeBondAmount);
-        bondToken.forceApprove(address(umaOracle), challengeBondAmount);
+        bondToken.safeTransferFrom(asserter, address(this), bondAmount);
+        bondToken.forceApprove(address(umaOracle), bondAmount);
 
         bytes memory claim = abi.encodePacked(
-            "Community market ", _uint256ToString(marketId), " is invalid per ipfs://", _bytes32ToHex(reasonIpfsHash)
+            "Community market ",
+            _uint256ToString(marketId),
+            " admin Layer 1 decision overturned per ipfs://",
+            _bytes32ToHex(reasonHash)
         );
 
         bytes32 assertionId = umaOracle.assertTruth(
@@ -267,16 +271,16 @@ contract ClovOracleAdapter is IClovOracleAdapter, Ownable, Pausable, ReentrancyG
             address(0),
             assertionLiveness,
             bondToken,
-            challengeBondAmount,
+            bondAmount,
             defaultIdentifier,
             bytes32(0)
         );
 
-        challengeAssertions[assertionId] = marketId;
-        isChallengeAssertion[assertionId] = true;
-        marketToChallengeAssertion[marketId] = assertionId;
+        escalationAssertions[assertionId] = marketId;
+        isEscalationAssertion[assertionId] = true;
+        marketToEscalationAssertion[marketId] = assertionId;
 
-        emit MarketChallengeAsserted(marketId, assertionId, asserter, reasonIpfsHash);
+        emit EscalationAsserted(marketId, assertionId, asserter, reasonHash);
 
         return assertionId;
     }
@@ -291,19 +295,18 @@ contract ClovOracleAdapter is IClovOracleAdapter, Ownable, Pausable, ReentrancyG
             revert OnlyUmaOracle();
         }
 
-        // Branch: challenge assertion routes back into the factory.
-        if (isChallengeAssertion[assertionId]) {
-            uint256 marketId = challengeAssertions[assertionId];
+        // Branch: escalation assertion routes back into the factory.
+        if (isEscalationAssertion[assertionId]) {
+            uint256 marketId = escalationAssertions[assertionId];
             // Clear state before external call to prevent re-entrant mischief.
-            delete challengeAssertions[assertionId];
-            delete isChallengeAssertion[assertionId];
-            delete marketToChallengeAssertion[marketId];
+            delete escalationAssertions[assertionId];
+            delete isEscalationAssertion[assertionId];
+            delete marketToEscalationAssertion[marketId];
 
             if (assertedTruthfully) {
-                // Assertion "market is invalid" upheld → challenge succeeded.
-                marketFactory.onChallengeUpheld(marketId);
+                marketFactory.onEscalationUpheld(marketId);
             } else {
-                marketFactory.onChallengeRejected(marketId);
+                marketFactory.onEscalationRejected(marketId);
             }
             return;
         }
@@ -345,9 +348,9 @@ contract ClovOracleAdapter is IClovOracleAdapter, Ownable, Pausable, ReentrancyG
             revert OnlyUmaOracle();
         }
 
-        // Challenge assertion disputed — no factory state change here; the final
+        // Escalation assertion disputed — no factory state change here; the final
         // truth/false decision still flows through assertionResolvedCallback.
-        if (isChallengeAssertion[assertionId]) {
+        if (isEscalationAssertion[assertionId]) {
             return;
         }
 
@@ -398,7 +401,7 @@ contract ClovOracleAdapter is IClovOracleAdapter, Ownable, Pausable, ReentrancyG
 
     /// @notice Adds an address to the asserter allowlist
     /// @param asserter The address to allowlist
-    function addAsserter(address asserter) external onlyOwner {
+    function addAsserter(address asserter) external onlyRole(OWNER_ROLE) {
         if (asserter == address(0)) revert ZeroAddress();
         allowedAsserters[asserter] = true;
         emit AsserterAdded(asserter);
@@ -406,10 +409,17 @@ contract ClovOracleAdapter is IClovOracleAdapter, Ownable, Pausable, ReentrancyG
 
     /// @notice Removes an address from the asserter allowlist
     /// @param asserter The address to remove
-    function removeAsserter(address asserter) external onlyOwner {
+    function removeAsserter(address asserter) external onlyRole(OWNER_ROLE) {
         if (asserter == address(0)) revert ZeroAddress();
         allowedAsserters[asserter] = false;
         emit AsserterRemoved(asserter);
+    }
+
+    /// @inheritdoc IClovOracleAdapter
+    function setBondAmount(uint256 newBond) external override onlyRole(OWNER_ROLE) {
+        uint256 old = bondAmount;
+        bondAmount = newBond;
+        emit BondAmountUpdated(old, newBond);
     }
 
     /// @inheritdoc IClovOracleAdapter
@@ -439,11 +449,11 @@ contract ClovOracleAdapter is IClovOracleAdapter, Ownable, Pausable, ReentrancyG
         return _permissionlessAssertion[marketId];
     }
 
-    function pause() external onlyOwner {
+    function pause() external onlyRole(OWNER_ROLE) {
         _pause();
     }
 
-    function unpause() external onlyOwner {
+    function unpause() external onlyRole(OWNER_ROLE) {
         _unpause();
     }
 
