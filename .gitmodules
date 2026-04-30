@@ -1,0 +1,24 @@
+[submodule "lib/forge-std"]
+	path = lib/forge-std
+	url = https://github.com/foundry-rs/forge-std
+[submodule "lib/solady"]
+	path = lib/solady
+	url = https://github.com/Vectorized/solady
+[submodule "lib/solmate"]
+	path = lib/solmate
+	url = https://github.com/transmissions11/solmate
+[submodule "lib/openzeppelin-solidity"]
+	path = lib/openzeppelin-solidity
+	url = https://github.com/OpenZeppelin/openzeppelin-contracts
+[submodule "lib/conditional-tokens-contracts"]
+	path = lib/conditional-tokens-contracts
+	url = https://github.com/gnosis/conditional-tokens-contracts
+[submodule "lib/conditional-tokens-market-makers"]
+	path = lib/conditional-tokens-market-makers
+	url = https://github.com/gnosis/conditional-tokens-market-makers
+[submodule "lib/exchange-fee-module"]
+	path = lib/exchange-fee-module
+	url = https://github.com/Polymarket/exchange-fee-module
+[submodule "lib/openzeppelin-contracts"]
+	path = lib/openzeppelin-contracts
+	url = https://github.com/OpenZeppelin/openzeppelin-contracts
