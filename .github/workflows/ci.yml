@@ -1,0 +1,68 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  forge:
+    name: Forge build, fmt, test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: foundry-rs/foundry-toolchain@v1
+
+      - name: Forge build
+        run: forge build --sizes
+
+      - name: Forge fmt check
+        run: forge fmt --check
+
+      - name: Forge test
+        run: forge test -vv
+
+  gas-snapshot:
+    name: Gas snapshot drift
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: foundry-rs/foundry-toolchain@v1
+
+      - name: Compare gas snapshot
+        # `forge snapshot --check` fails if any test gas usage drifts beyond
+        # the tolerance configured in foundry.toml. The committed `.gas-snapshot`
+        # is the baseline.
+        run: forge snapshot --check
+        continue-on-error: true
+
+  slither:
+    name: Slither static analysis
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: foundry-rs/foundry-toolchain@v1
+
+      - name: Forge build
+        run: forge build
+
+      - name: Run Slither
+        uses: crytic/slither-action@v0.4.0
+        with:
+          fail-on: high
+          slither-args: --exclude-dependencies --filter-paths "lib/|src/vendor/|src/exchange/common/|src/neg-risk/libraries/CTHelpers.sol"
+        continue-on-error: true
