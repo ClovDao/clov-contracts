@@ -1,0 +1,80 @@
+Clov Contracts
+Copyright (c) 2026 ClovDao
+
+This product includes software developed by third parties under the
+licenses listed below. The MIT license in LICENSE applies to all
+first-party Clov code unless a specific file declares otherwise via
+its SPDX-License-Identifier header.
+
+================================================================
+PORTIONS DERIVED FROM POLYMARKET (MIT License)
+================================================================
+
+The CLOB exchange contracts under src/exchange/ are derived from:
+
+  Polymarket CTF Exchange
+  https://github.com/Polymarket/ctf-exchange
+  Copyright (c) Polymarket
+  Licensed under the MIT License.
+
+The negative-risk multi-outcome contracts under src/neg-risk/ are
+derived from:
+
+  Polymarket Neg-Risk CTF Adapter
+  https://github.com/Polymarket/neg-risk-ctf-adapter
+  Copyright (c) Polymarket
+  Licensed under the MIT License.
+
+Within src/neg-risk/, the files ClovNegRiskOracle.sol and
+NegRiskCommunityRegistry.sol are first-party Clov code written for
+the community-market lifecycle and are NOT derived from Polymarket.
+
+The original copyright notices and MIT license terms are preserved
+in each derived file's SPDX header. Modifications by ClovDao are
+also licensed under MIT.
+
+================================================================
+VENDORED THIRD-PARTY CODE
+================================================================
+
+src/vendor/GnosisCompile.sol vendors the Gnosis Conditional Tokens
+primitives:
+
+  https://github.com/gnosis/conditional-tokens-contracts
+  Licensed under LGPL-3.0.
+
+Use of this specific file is governed by LGPL-3.0, not the MIT
+license that covers the rest of this repository.
+
+================================================================
+THIRD-PARTY FILES UNDER ALTERNATIVE LICENSES
+================================================================
+
+The following files retain AGPL-3.0-only licensing inherited from
+their upstream sources (Solmate / Polymarket forks):
+
+  src/exchange/common/ERC20.sol
+  src/exchange/common/ReentrancyGuard.sol
+  src/exchange/common/interfaces/IERC20.sol
+  src/neg-risk/libraries/CTHelpers.sol
+  src/neg-risk/interfaces/IERC20.sol
+  src/neg-risk/interfaces/IFinder.sol
+  src/neg-risk/interfaces/IAddressWhitelist.sol
+
+Use of these specific files is governed by AGPL-3.0-only.
+
+================================================================
+DEPENDENCIES (Foundry libraries under lib/)
+================================================================
+
+External dependencies are managed as git submodules and retain
+their respective upstream licenses:
+
+  forge-std                       MIT
+  solady                          MIT
+  solmate                         AGPL-3.0-only
+  openzeppelin-contracts          MIT
+  openzeppelin-solidity           MIT
+  conditional-tokens-contracts    LGPL-3.0
+  conditional-tokens-market-makers LGPL-3.0
+  exchange-fee-module             MIT
