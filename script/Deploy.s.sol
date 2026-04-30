@@ -29,6 +29,14 @@ import { IOptimisticOracleV3 } from "../src/interfaces/IOptimisticOracleV3.sol";
 ///      Trading is handled by the CTF Exchange CLOB
 ///      (deployed separately).
 contract Deploy is Script {
+    // ── Community-layer outputs ──
+    // Stored as state (not local) so `run()` doesn't need to destructure a 3-tuple
+    // return from `_deployCommunityLayer`, which pushed the Yul pipeline past
+    // the stack-too-deep threshold once Timelock + UMA precheck locals were added.
+    MarketRewards internal _marketRewards;
+    ClovCommunityExecutor internal _executor;
+    address internal _protocolTreasury;
+
     // ── External addresses on Amoy (confirmed) ──
     address constant USDC = 0x41E94Eb019C0762f9Bfcf9Fb1E58725BfB0e7582;
     address constant UMA_ORACLE_V3 = 0xd8866E76441df243fc98B892362Fc6264dC3ca80;
@@ -224,10 +232,10 @@ contract Deploy is Script {
         console.log("NegRiskCtfExchange: NegRiskCommunityRegistry authorised as admin");
 
         // ── Steps 17-19: Community layer (MarketRewards + Executor + exchange wiring) ──
-        // Extracted into a helper to keep `run()` below the Solidity stack-too-deep
-        // threshold (~16 local variables).
-        (MarketRewards marketRewards, ClovCommunityExecutor executor, address protocolTreasury) =
-            _deployCommunityLayer(ctfExchange, negRiskCtfExchange, marketFactory, negRiskCommunityRegistry, deployer);
+        // Helper writes its outputs to state (`_marketRewards`, `_executor`,
+        // `_protocolTreasury`) instead of returning a tuple, which would push
+        // `run()` over the Yul stack-too-deep threshold.
+        _deployCommunityLayer(ctfExchange, negRiskCtfExchange, marketFactory, negRiskCommunityRegistry, deployer);
 
         // ── Step 20: Role handoff to Timelock + multisig, deployer renounces all roles ──
         // Order matters: grant the new holders FIRST, then renounce from deployer LAST. If
@@ -252,9 +260,9 @@ contract Deploy is Script {
         console.log("NegRiskCtfExchange:         ", address(negRiskCtfExchange));
         console.log("ClovNegRiskOracle:          ", address(clovNegRiskOracle));
         console.log("NegRiskCommunityRegistry:   ", address(negRiskCommunityRegistry));
-        console.log("MarketRewards:              ", address(marketRewards));
-        console.log("ClovCommunityExecutor:      ", address(executor));
-        console.log("protocolTreasury:           ", protocolTreasury);
+        console.log("MarketRewards:              ", address(_marketRewards));
+        console.log("ClovCommunityExecutor:      ", address(_executor));
+        console.log("protocolTreasury:           ", _protocolTreasury);
         console.log("USDC (collateral + bond):   ", USDC);
         console.log("UMA OptimisticOracleV3:     ", UMA_ORACLE_V3);
         console.log("Safe Factory:               ", SAFE_FACTORY);
@@ -266,41 +274,42 @@ contract Deploy is Script {
     }
 
     /// @dev Deploys MarketRewards + ClovCommunityExecutor and wires the executor as
-    ///      operator on both exchanges. Split out of `run()` to avoid the EVM
-    ///      stack-too-deep error.
+    ///      operator on both exchanges. Writes outputs to state (`_marketRewards`,
+    ///      `_executor`, `_protocolTreasury`) so `run()` doesn't have to
+    ///      destructure a tuple and exceed the Yul stack-too-deep threshold.
     function _deployCommunityLayer(
         CTFExchange ctfExchange,
         NegRiskCtfExchange negRiskCtfExchange,
         MarketFactory marketFactory,
         NegRiskCommunityRegistry negRiskCommunityRegistry,
         address deployer
-    ) internal returns (MarketRewards marketRewards, ClovCommunityExecutor executor, address protocolTreasury) {
+    ) internal {
         // Step 17: MarketRewards — USDC vault that funds maker rebate claims.
-        marketRewards = new MarketRewards(USDC, deployer);
-        console.log("MarketRewards:", address(marketRewards));
+        _marketRewards = new MarketRewards(USDC, deployer);
+        console.log("MarketRewards:", address(_marketRewards));
 
         // Step 18: ClovCommunityExecutor — community-tier fee distribution path.
         //   2.3% taker fee pulled in USDC and split 0.6 / 1.0 / 0.7 (rebate / creator / protocol).
-        protocolTreasury = vm.envOr("PROTOCOL_TREASURY_ADDRESS", deployer);
-        console.log("protocolTreasury (fee destination):", protocolTreasury);
+        _protocolTreasury = vm.envOr("PROTOCOL_TREASURY_ADDRESS", deployer);
+        console.log("protocolTreasury (fee destination):", _protocolTreasury);
 
-        executor = new ClovCommunityExecutor(
+        _executor = new ClovCommunityExecutor(
             USDC,
             address(ctfExchange),
             address(negRiskCtfExchange),
             address(marketFactory),
             address(negRiskCommunityRegistry),
-            address(marketRewards),
-            protocolTreasury
+            address(_marketRewards),
+            _protocolTreasury
         );
-        console.log("ClovCommunityExecutor:", address(executor));
+        console.log("ClovCommunityExecutor:", address(_executor));
 
         // Step 19: authorise the executor as operator on both exchanges so its
         //          matchCommunity / matchCommunityNegRisk paths can call matchOrders.
         //          Relayer EOA remains operator for curated-market flow.
-        ctfExchange.addOperator(address(executor));
+        ctfExchange.addOperator(address(_executor));
         console.log("CTFExchange: executor authorised as operator");
-        negRiskCtfExchange.addOperator(address(executor));
+        negRiskCtfExchange.addOperator(address(_executor));
         console.log("NegRiskCtfExchange: executor authorised as operator");
     }
 
