@@ -7,8 +7,7 @@
   "author": "ClovDao",
   "repository": {
     "type": "git",
-    "url": "https://github.com/ClovDao/Clov",
-    "directory": "packages/contracts"
+    "url": "https://github.com/ClovDao/clov-contracts"
   },
   "scripts": {
     "build": "forge build",
