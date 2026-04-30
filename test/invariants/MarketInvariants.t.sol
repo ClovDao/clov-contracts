@@ -374,6 +374,13 @@ contract MarketHandler is Test {
         // Bond paid out to creator; deposit stays in factory (not refunded here).
         ghost_bondEscrowed[marketId] = 0;
         if (escrowed <= ghost_totalBondsEscrowed) ghost_totalBondsEscrowed -= escrowed;
+
+        // Track the re-armed deadline for the monotonicity invariant. The contract uses
+        // max(existing, now + POST_RESOLUTION_PERIOD), so the ghost mirrors that.
+        uint256 reArm = block.timestamp + factory.POST_RESOLUTION_PERIOD();
+        if (reArm > ghost_challengeDeadline[marketId]) {
+            ghost_challengeDeadline[marketId] = reArm;
+        }
     }
 
     function handler_escalateToUma(uint256 marketSeed) external {
@@ -389,22 +396,13 @@ contract MarketHandler is Test {
         if (!inWindow) return;
         if (ext.escalated) return;
 
-        // Standing for escalation belongs to BOTH the creator and the original challenger
-        // regardless of which side won the admin decision (resolveChallengeRejected preserves
-        // `ext.challenger`; resolveChallengeUpheld preserves it too via the storage struct).
-        // Randomize between them so bondEscrowConservation is exercised across both paths.
-        address creator = factory.getMarket(marketId).creator;
-        address challenger = ext.challenger;
-        address escalator;
-        if (creator == address(0) && challenger == address(0)) {
-            return;
-        } else if (challenger == address(0)) {
-            escalator = creator;
-        } else if (creator == address(0)) {
-            escalator = challenger;
-        } else {
-            escalator = (marketSeed % 2 == 0) ? creator : challenger;
-        }
+        // Loser-only standing: the contract restricts escalation to the side that lost the
+        // admin Layer 1 decision. Cancelled = admin upheld → creator lost → creator escalates.
+        // Pending = admin rejected → challenger lost → challenger escalates. Picking the wrong
+        // side here would cause every iteration to revert and silently neuter the invariant.
+        address escalator = ext.creationStatus == IMarketFactory.MarketCreationStatus.Cancelled
+            ? factory.getMarket(marketId).creator
+            : ext.challenger;
         if (escalator == address(0)) return;
 
         // Mock the adapter call so the external assertion path succeeds without UMA wiring.
@@ -694,17 +692,19 @@ contract MarketInvariants is StdInvariant, Test {
         }
     }
 
-    /// @notice Every community market carries a non-zero challenge deadline. The exact value
-    ///         is not pinned because `resolveChallengeRejected` re-arms it to
-    ///         `block.timestamp + POST_RESOLUTION_PERIOD`, which can move it forward OR backward
-    ///         relative to the original creation-time deadline (anomaly noted: a late rejection
-    ///         can shrink an originally-far-future window).
-    function invariant_challengeDeadlineSet() public view {
+    /// @notice Every community market carries a non-zero challenge deadline AND that deadline
+    ///         never moves backward over the market's lifetime. `resolveChallengeRejected`
+    ///         re-arms the window to `max(existing, block.timestamp + POST_RESOLUTION_PERIOD)`
+    ///         so an originally-far-future deadline cannot be shrunk by a late admin rejection.
+    function invariant_challengeDeadlineMonotonic() public view {
         uint256 count = factory.marketCount();
         for (uint256 i = 0; i < count; i++) {
             if (!handler.ghost_isCommunity(i)) continue;
             IMarketFactory.MarketExtended memory ext = factory.getMarketExtended(i);
             assertTrue(ext.challengeDeadline != 0, "community market must carry a non-zero challenge deadline");
+            assertGe(
+                ext.challengeDeadline, handler.ghost_challengeDeadline(i), "challenge deadline must never decrease"
+            );
         }
     }
 

@@ -1236,7 +1236,10 @@ contract MarketFactoryTest is Test {
         assertEq(uint8(ext.creationStatus), uint8(IMarketFactory.MarketCreationStatus.Pending));
         assertEq(ext.challengeBond, 0);
         assertEq(ext.resolutionDeadline, block.timestamp + factory.POST_RESOLUTION_PERIOD());
-        assertEq(ext.challengeDeadline, block.timestamp + factory.POST_RESOLUTION_PERIOD());
+        // Challenge deadline is `max(original, now + POST_RESOLUTION_PERIOD)`. No warp happens
+        // between creation and resolution here, so the original 48h window stays larger than
+        // the 24h re-arm and must be preserved.
+        assertEq(ext.challengeDeadline, block.timestamp + factory.CHALLENGE_PERIOD());
     }
 
     function test_resolveChallengeRejected_emitsChallengeResolved() public {
@@ -1291,6 +1294,57 @@ contract MarketFactoryTest is Test {
         IMarketFactory.MarketExtended memory ext = factory.getMarketExtended(marketId);
         assertEq(uint8(ext.creationStatus), uint8(IMarketFactory.MarketCreationStatus.Challenged));
         assertEq(ext.challenger, carol);
+    }
+
+    function test_resolveChallengeRejected_preservesOriginalDeadline_whenLargerThanReArm() public {
+        // A late admin rejection must NOT shrink an originally-far-future challenge deadline.
+        // Setup: market created at t0 with deadline = t0 + 48h. Challenge + rejection happen
+        // ~1h later, so the naive re-arm (now + 24h ≈ t0 + 25h) is BEFORE the original t0 + 48h.
+        // Expectation: deadline stays at t0 + 48h (max preserved).
+        uint256 marketId = _createCommunityMarket(alice);
+        IMarketFactory.MarketExtended memory pre = factory.getMarketExtended(marketId);
+        uint256 originalDeadline = pre.challengeDeadline;
+
+        _fundChallenger(bob);
+        vm.prank(bob);
+        factory.challengeMarket(marketId, REASON);
+
+        // Advance only 1h — well below CHALLENGE_PERIOD (48h) and POST_RESOLUTION_PERIOD (24h)
+        // so naive re-arm = now + 24h is strictly less than original t0 + 48h.
+        vm.warp(block.timestamp + 1 hours);
+
+        _grantResolver();
+        vm.prank(resolver);
+        factory.resolveChallengeRejected(marketId, RESOLVE_REASON);
+
+        IMarketFactory.MarketExtended memory post = factory.getMarketExtended(marketId);
+        uint256 naiveReArm = block.timestamp + factory.POST_RESOLUTION_PERIOD();
+        assertGt(originalDeadline, naiveReArm, "test setup: original must exceed naive re-arm");
+        assertEq(post.challengeDeadline, originalDeadline, "deadline must be preserved at the larger value");
+    }
+
+    function test_resolveChallengeRejected_extendsDeadline_whenReArmIsLarger() public {
+        // Mirror case: if rejection happens late enough that now + 24h is AFTER the original
+        // deadline, the re-arm should advance the deadline so a fresh challenger gets a window.
+        uint256 marketId = _createCommunityMarket(alice);
+        IMarketFactory.MarketExtended memory pre = factory.getMarketExtended(marketId);
+        uint256 originalDeadline = pre.challengeDeadline;
+
+        _fundChallenger(bob);
+        vm.prank(bob);
+        factory.challengeMarket(marketId, REASON);
+
+        // Advance 47h — past the original 48h once we add the 24h post-resolution period.
+        vm.warp(block.timestamp + 47 hours);
+
+        _grantResolver();
+        vm.prank(resolver);
+        factory.resolveChallengeRejected(marketId, RESOLVE_REASON);
+
+        IMarketFactory.MarketExtended memory post = factory.getMarketExtended(marketId);
+        uint256 expected = block.timestamp + factory.POST_RESOLUTION_PERIOD();
+        assertGt(expected, originalDeadline, "test setup: re-arm must exceed original");
+        assertEq(post.challengeDeadline, expected, "deadline must advance to re-arm value");
     }
 
     // ──────────────────────────────────────────────
@@ -1366,6 +1420,29 @@ contract MarketFactoryTest is Test {
         address random = makeAddr("random-escalator");
         vm.prank(random);
         vm.expectRevert(abi.encodeWithSelector(IMarketFactory.NotEligibleToEscalate.selector, random));
+        factory.escalateToUma(marketId);
+    }
+
+    function test_escalateToUma_revertsForWinner_postCancelled() public {
+        // Admin upheld the challenge → creator lost, challenger won. The winner (challenger)
+        // must NOT be able to self-escalate: doing so would burn a UMA bond against an outcome
+        // already decided in their favor, with no path to a different result.
+        uint256 marketId = _setupPostAdminCancelled();
+        _mockAssertEscalatedChallenge();
+
+        vm.prank(bob);
+        vm.expectRevert(abi.encodeWithSelector(IMarketFactory.NotEligibleToEscalate.selector, bob));
+        factory.escalateToUma(marketId);
+    }
+
+    function test_escalateToUma_revertsForWinner_postPending() public {
+        // Admin rejected the challenge → challenger lost, creator won. The winner (creator)
+        // must NOT be able to self-escalate.
+        uint256 marketId = _setupPostAdminPending();
+        _mockAssertEscalatedChallenge();
+
+        vm.prank(alice);
+        vm.expectRevert(abi.encodeWithSelector(IMarketFactory.NotEligibleToEscalate.selector, alice));
         factory.escalateToUma(marketId);
     }
 
@@ -1495,10 +1572,51 @@ contract MarketFactoryTest is Test {
 
         IMarketFactory.MarketExtended memory ext = factory.getMarketExtended(marketId);
         assertEq(uint8(ext.creationStatus), uint8(IMarketFactory.MarketCreationStatus.Pending));
-        assertEq(ext.challengeDeadline, block.timestamp + factory.POST_RESOLUTION_PERIOD());
+        // Re-arm uses `max(original, now + POST_RESOLUTION_PERIOD)`. With no warp in setup, the
+        // original creation-time deadline (CHALLENGE_PERIOD = 48h) is still larger than the
+        // re-arm value (POST_RESOLUTION_PERIOD = 24h), so the original is preserved.
+        assertEq(ext.challengeDeadline, block.timestamp + factory.CHALLENGE_PERIOD());
+        assertGe(ext.challengeDeadline, block.timestamp + factory.POST_RESOLUTION_PERIOD());
 
         IMarketFactory.MarketData memory m = factory.getMarket(marketId);
         assertEq(uint8(m.status), uint8(IMarketFactory.MarketStatus.Created));
+    }
+
+    function test_onEscalationUpheld_preservesOriginalDeadline_whenLargerThanReArm() public {
+        // Mirror of the resolveChallengeRejected guard: `onEscalationUpheld` must not shrink an
+        // originally-far-future challenge deadline when UMA reverses fast. Create at t0 with
+        // deadline t0+48h; admin upheld + escalation + UMA upheld all complete within 1h of t0
+        // so naive re-arm (now + 24h ≈ t0+25h) is still strictly less than the original.
+        uint256 marketId = _setupEscalatedMarket({ adminUpheld: true, creatorEscalates: true });
+        IMarketFactory.MarketExtended memory pre = factory.getMarketExtended(marketId);
+        uint256 originalDeadline = pre.challengeDeadline;
+
+        vm.prank(oracleAdapter);
+        factory.onEscalationUpheld(marketId);
+
+        IMarketFactory.MarketExtended memory post = factory.getMarketExtended(marketId);
+        uint256 naiveReArm = block.timestamp + factory.POST_RESOLUTION_PERIOD();
+        assertGt(originalDeadline, naiveReArm, "test setup: original must exceed naive re-arm");
+        assertEq(post.challengeDeadline, originalDeadline, "deadline must be preserved at the larger value");
+    }
+
+    function test_onEscalationUpheld_extendsDeadline_whenReArmIsLarger() public {
+        // If UMA resolution lands AFTER the original deadline has already passed, the re-arm
+        // must extend the window so the reinstated market gets a fresh challenge period.
+        uint256 marketId = _setupEscalatedMarket({ adminUpheld: true, creatorEscalates: true });
+        IMarketFactory.MarketExtended memory pre = factory.getMarketExtended(marketId);
+        uint256 originalDeadline = pre.challengeDeadline;
+
+        // Warp past the original window so re-arm becomes the binding bound.
+        vm.warp(originalDeadline + 1);
+
+        vm.prank(oracleAdapter);
+        factory.onEscalationUpheld(marketId);
+
+        IMarketFactory.MarketExtended memory post = factory.getMarketExtended(marketId);
+        uint256 expected = block.timestamp + factory.POST_RESOLUTION_PERIOD();
+        assertGt(expected, originalDeadline, "test setup: re-arm must exceed original");
+        assertEq(post.challengeDeadline, expected, "deadline must advance to re-arm value");
     }
 
     function test_onEscalationRejected_creatorEscalator_marketStaysCancelled() public {

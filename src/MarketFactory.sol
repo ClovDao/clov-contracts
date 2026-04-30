@@ -539,7 +539,13 @@ contract MarketFactory is IMarketFactory, AccessControl, Pausable, ReentrancyGua
         ext.creationStatus = MarketCreationStatus.Pending;
         ext.challengeBond = 0;
         ext.resolutionDeadline = block.timestamp + POST_RESOLUTION_PERIOD;
-        ext.challengeDeadline = block.timestamp + POST_RESOLUTION_PERIOD;
+        // Re-arm the challenge window for at least POST_RESOLUTION_PERIOD, but never shrink an
+        // originally-far-future deadline: a late admin rejection must not curtail the time a
+        // fresh challenger had at creation time.
+        uint256 reArm = block.timestamp + POST_RESOLUTION_PERIOD;
+        if (reArm > ext.challengeDeadline) {
+            ext.challengeDeadline = reArm;
+        }
 
         if (chBond > 0 && creator != address(0)) {
             collateralToken.safeTransfer(creator, chBond);
@@ -556,10 +562,15 @@ contract MarketFactory is IMarketFactory, AccessControl, Pausable, ReentrancyGua
     // ──────────────────────────────────────────────
 
     /// @inheritdoc IMarketFactory
-    /// @dev Standing: only the market creator or original challenger may call. Cooldown:
-    ///      callable only within `POST_RESOLUTION_PERIOD` of an admin decision (Cancelled or
-    ///      Pending). Escalation before an admin acts is forbidden so the L1 escrow has a
-    ///      single, well-defined disbursement path. One-shot per market (`escalated`).
+    /// @dev Standing: only the LOSER of the admin Layer 1 decision may escalate. If the admin
+    ///      upheld the challenge (state=Cancelled), the creator lost and can escalate. If the
+    ///      admin rejected the challenge (state=Pending), the original challenger lost and can
+    ///      escalate. Symmetric standing would let the winner self-escalate to grief the loser
+    ///      by burning a UMA bond against an already-decided outcome.
+    ///
+    ///      Cooldown: callable only within `POST_RESOLUTION_PERIOD` of an admin decision.
+    ///      Escalation before an admin acts is forbidden so the L1 escrow has a single,
+    ///      well-defined disbursement path. One-shot per market (`escalated`).
     ///
     ///      UX note: the caller must have approved the oracle adapter (NOT this factory)
     ///      for the UMA bond, since the adapter pulls it directly via
@@ -569,10 +580,6 @@ contract MarketFactory is IMarketFactory, AccessControl, Pausable, ReentrancyGua
 
         if (ext.escalated) revert AlreadyEscalated();
 
-        if (msg.sender != markets[marketId].creator && msg.sender != ext.challenger) {
-            revert NotEligibleToEscalate(msg.sender);
-        }
-
         // Only escalable post-admin: state must be Cancelled (admin upheld) or Pending (admin
         // rejected) AND we must still be within the 24h cooldown.
         bool inPostResolution =
@@ -580,6 +587,14 @@ contract MarketFactory is IMarketFactory, AccessControl, Pausable, ReentrancyGua
                 && block.timestamp <= ext.resolutionDeadline;
         if (!inPostResolution) {
             revert EscalationWindowClosed();
+        }
+
+        // Loser-only standing: pick the eligible escalator from the admin verdict.
+        address eligible = ext.creationStatus == MarketCreationStatus.Cancelled
+            ? markets[marketId].creator  // admin upheld → creator lost
+            : ext.challenger; // admin rejected → challenger lost
+        if (msg.sender != eligible) {
+            revert NotEligibleToEscalate(msg.sender);
         }
 
         ext.escalated = true;
@@ -610,8 +625,13 @@ contract MarketFactory is IMarketFactory, AccessControl, Pausable, ReentrancyGua
             // the creator's market is reinstated to Pending so it can be re-armed/activated.
             ext.creationStatus = MarketCreationStatus.Pending;
             m.status = MarketStatus.Created;
-            // Re-arm a short challenge window so the chain state is consistent with a re-opened market.
-            ext.challengeDeadline = block.timestamp + POST_RESOLUTION_PERIOD;
+            // Re-arm a short challenge window so the chain state is consistent with a re-opened
+            // market, but never shrink an originally-far-future deadline (UMA can resolve faster
+            // than the creation-time window expires).
+            uint256 reArm = block.timestamp + POST_RESOLUTION_PERIOD;
+            if (reArm > ext.challengeDeadline) {
+                ext.challengeDeadline = reArm;
+            }
             IClovOracleAdapter(oracleAdapter).setPermissionlessAssertion(marketId);
         } else {
             // Admin had rejected the challenge; UMA reverses → market is cancelled.
